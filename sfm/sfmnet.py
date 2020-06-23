@@ -1,33 +1,16 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
-import imageio
-import os
-
-class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
-  def __init__(self, root_dir):
-    self.num_images = len(os.listdir(root_dir))
-    self.root_dir = root_dir
-
-  def __len__(self):
-    return self.num_images - 1 # -1 since we load pairs
-  
-  def __getitem__(self, idx):
-    im_1 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx}.png'), dtype=torch.float32)
-    im_2 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx+1}.png'), dtype=torch.float32)
-    return torch.cat((im_1, im_2), dim=-1).transpose(-1,0)
 
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
 
-  This module is desgined for inputs with shape (6,288,512)
   The 6 input channels come from two 3 channel images concatenated
   along the 3rd dimension 
 
   H and W must be divisible by 2**num_conv_encode
   """
-  def __init__(self, H,W, K=1, C=8, num_conv_encode=2, fc_layer_width=512):
+  def __init__(self, *, H, W, K=1, C=8, num_conv_encode=2, fc_layer_width=512):
     super(SfMNet, self).__init__()
     self.factor = num_conv_encode
     self.H, self.W, self.K, self.C = H,W,K,C
@@ -80,6 +63,8 @@ class SfMNet(torch.nn.Module):
     self.fc1 = nn.Linear(embedding_dim, self.fc_layer_width)
     self.fc2 = nn.Linear(self.fc_layer_width, self.fc_layer_width)
     self.fc3 = nn.Linear(self.fc_layer_width, 2*self.K) # Predict 2d displacement for spatial transform
+    torch.nn.init.zeros_(self.fc3.weight)
+    torch.nn.init.zeros_(self.fc3.bias)
 
   def forward(self, input):
     xs = input
@@ -91,7 +76,7 @@ class SfMNet(torch.nn.Module):
         encodings.append(xs)
       xs = F.relu(bn(conv(xs)))
 
-    embedding = torch.reshape(xs, (xs.shape[0], -1)) # Reshape to a flat vector
+    embedding = torch.flatten(xs)
     assert(len(encodings) == self.factor)
 
     # Compute object masks using convolutional decoder layers
@@ -105,26 +90,32 @@ class SfMNet(torch.nn.Module):
     # Compute the displacements starting from the embedding using FC layers
     embedding = F.relu(self.fc1(embedding))
     embedding = F.relu(self.fc2(embedding))
-    displacements = self.fc3(embedding)
-    # Displacements has shape (batch_size, self.K * 2)
-    # reshape in order to broadcast with masks
-    displacements = displacements.reshape((batch_size, self.K, 1, 1, 2))
-    flow = torch.sum(displacements * masks.unsqueeze(-1), dim=1)
+    displacements = self.fc3(embedding).reshape((batch_size, self.K, 2))
+
+    # Reshape displacements and masks so they can be broadcast
+    flow = torch.sum(displacements.reshape((batch_size, self.K, 1, 1, 2)) * masks.unsqueeze(-1), dim=1)
     # flow has size (batch_size, H, W, 2)
 
-    grid = self.grid.clone() - flow
+    grid = self.grid.clone() + flow
     out = torch.nn.functional.grid_sample(input[0:3], grid)
     
     return out, masks, displacements
 
-ds = PairConsecutiveFramesDataset('../../data/single_red_ball_512x288')
-dl = torch.utils.data.DataLoader(ds, batch_size=1, shuffle=True)
+def l1_recon_loss(p,q):
+  # p,q should both have shape NxCxHxW
+  return torch.mean(torch.abs(p - q))
 
-model = SfMNet()
-optim = torch.optim.Adam(model.parameters())
+def l1_flow_regularization(masks, displacements):
+  """ Computes the mean L1 of the flow across the batch
 
-input = ds[0].unsqueeze(0)
-output = model(input)
-print(output.shape)
+  masks         - shape NxCxHxW where C is the number of objects
+  displacements - shape NxCx2
+  """
 
-torch.dtype.float32
+  # This doesn't seem like it is invariant to upsampling.
+  # If the input is upsampled 2x, then the displacement should be 2x larger, the masks should cover 4x the area
+  # Thus this loss would be bigger. Does this matter? Probably not I guess...
+  return torch.mean( \
+    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,2,3,4)), \
+    dim=0 \
+  )
