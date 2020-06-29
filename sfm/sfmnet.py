@@ -15,13 +15,8 @@ class SfMNet(torch.nn.Module):
     self.factor = num_conv_encode
     self.H, self.W, self.K, self.C = H,W,K,C
     self.fc_layer_width = fc_layer_width
-
-    # This will be useful in forward to do the spatial transform
-    self.grid = torch.cartesian_prod(
-      torch.linspace(-1,1,steps=self.H), \
-      torch.linspace(-1,1,step=self.W)   \
-    ).reshape((self.H,self.W,2))
-
+    # 2d affine transform
+    self.identity_affine_transform = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
 
     ####################
     #     Encoder      #
@@ -68,7 +63,7 @@ class SfMNet(torch.nn.Module):
 
   def forward(self, input):
     xs = input
-    batch_size = self.shape[0]
+    batch_size = input.shape[0]
     # Compute the embedding using the encoder convolutional layers
     encodings = []
     for i, (conv, bn) in enumerate(zip(self.conv_encode, self.bns_encode)):
@@ -76,7 +71,7 @@ class SfMNet(torch.nn.Module):
         encodings.append(xs)
       xs = F.relu(bn(conv(xs)))
 
-    embedding = torch.flatten(xs)
+    embedding = torch.flatten(xs, start_dim=1)
     assert(len(encodings) == self.factor)
 
     # Compute object masks using convolutional decoder layers
@@ -96,17 +91,37 @@ class SfMNet(torch.nn.Module):
     flow = torch.sum(displacements.reshape((batch_size, self.K, 1, 1, 2)) * masks.unsqueeze(-1), dim=1)
     # flow has size (batch_size, H, W, 2)
 
-    grid = self.grid.clone() + flow
-    out = torch.nn.functional.grid_sample(input[0:3], grid)
+    # identity is not a function of any of the forward parameters
+    identity = F.affine_grid( \
+      # Need to batchify identtiy_affine_transform
+      self.identity_affine_transform.unsqueeze(0).repeat(batch_size, 1, 1), \
+      (batch_size, 3, self.H, self.W), \
+      align_corners=False
+    )
+  
+    grid =  identity + flow
+    out = F.grid_sample(input[:,0:3], grid, align_corners=False)
     
-    return out, masks, displacements
+    return out, masks, flow, displacements
 
 def l1_recon_loss(p,q):
-  # p,q should both have shape NxCxHxW
+  """ Computes the mean L1 reconstructions loss of a batch
+
+  p - The first image in the sequence
+  q - The second image in the sequence
+
+  p,q should both have shape NxCxHxW
+  """
+  
   return torch.mean(torch.abs(p - q))
 
 def l1_flow_regularization(masks, displacements):
-  """ Computes the mean L1 of the flow across the batch
+  """ Computes the mean L1 norm of the flow across the batch
+
+  This is a bit different than flow returned by the model.
+  The flow reutrned by the model is the sum of the constituent flows
+  of each object. The flow calculated here is the L1 norm of 
+  the constituent flows.
 
   masks         - shape NxCxHxW where C is the number of objects
   displacements - shape NxCx2
