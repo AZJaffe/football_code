@@ -7,7 +7,7 @@ class Frame:
   def __init__(self, shape):
     self.frame = 255 * np.ones(tuple(shape) + (3,), dtype='uint8')
 
-  def draw_circle(self, centre, radius, colour=[255,0,0]):
+  def draw_circle(self, centre, radius, colour=np.array([255.,0.,0.]), gradient=0.15):
     """Draws a circle on the frame.
 
     Parameters:
@@ -24,8 +24,9 @@ class Frame:
     # Search the square with side lengths radius centred at centre.
     for i in range(min_x, max_x):
       for j in range(min_y, max_y):
-        if np.sqrt((i - centre[0]) ** 2 + (j - centre[1]) ** 2) <= radius:
-          self.frame[i,j] = colour
+        d = np.sqrt((i - centre[0]) ** 2 + (j - centre[1]) ** 2) 
+        if d < radius:
+          self.frame[i,j] = colour * (1 - d * gradient)
     return self.frame
 
 def display_frames(frames):
@@ -36,12 +37,11 @@ def display_frames(frames):
   plt.show()
 
 # size should be np array of size (2,)
-def generate_random_frames(size, radius, total_frames, speed, out_dir):
-  n = np.random.normal([0,0], [1,1])
-  d = np.array(speed * n / np.linalg.norm(n), dtype='int') # d ~ speed * Unif(S^2)
+def generate_random_frames(size, radius, total_frames, speed_min, speed_max, out_dir):
   loc = np.random.randint(radius, size - radius)
-  print(d)
   for i in range(total_frames):
+    n = np.random.normal([0,0], [1,1])
+    d = np.array(np.random.uniform(speed_min, speed_max) * n / np.linalg.norm(n), dtype='int') # d ~ Unif([speed_min, speed_max] x S^2)
     if i % 10 == 0:
       print(f'i={i}')
     frame = Frame(size).draw_circle(loc, radius)
@@ -74,7 +74,8 @@ if __name__ == '__main__':
                       help='The directory to write to')
   parser.add_argument('height', type=int, default=288)
   parser.add_argument('width', type=int, default=512)
-  parser.add_argument('--speed', type=int, default=6)
+  parser.add_argument('--speed_min', type=int, default=2)
+  parser.add_argument('--speed_max', type=int, default=10)
   parser.add_argument('--num_frames', type=int, default=1000)
   parser.add_argument('--radius', type=int, default=40)
 
@@ -84,6 +85,7 @@ if __name__ == '__main__':
     np.array([args.height, args.width]), 
     args.radius, 
     args.num_frames, 
-    args.speed, 
+    args.speed_min,
+    args.speed_max, 
     args.out_dir,
   )

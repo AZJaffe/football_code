@@ -1,69 +1,124 @@
 import argparse
-import os
-import imageio
 import torch
-import sfmnet
+import time
+import numpy as np
 import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
-class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
-  def __init__(self, root_dir):
-    self.num_images = len(os.listdir(root_dir))
-    self.root_dir = root_dir
+import sfmnet
+from pair_frames_dataset import PairConsecutiveFramesDataset
 
-  def __len__(self):
-    return self.num_images - 1 # -1 since we load pairs
-  
-  def __getitem__(self, idx):
-    #imageio reads as WxH
-    im_1 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx}.png'), dtype=torch.float32)
-    im_2 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx+1}.png'), dtype=torch.float32)
-    return torch.cat((im_1 / 255, im_2 / 255), dim=-1).permute(2, 0, 1)
 
-def train(*, data_dir, num_epochs=1, batch_size=8, lambda_flow_reg=0.2):
-  ds = PairConsecutiveFramesDataset(data_dir)
-  dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
+def train(*, 
+  load_model_path,
+  out_dir, 
+  ds, 
+  lr=0.001,
+  num_epochs=1, 
+  flow_reg_coeff=0.,
+  batch_size=16, 
+  save_frequency=100
+):
+  if ds is None:
+    raise 'Pass a dataset'
+  input_shape = ds[0].shape
   model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128)
-  optimizer = torch.optim.Adam(model.parameters())
+  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  start_epoch = 0
 
-  for i in range(num_epochs):
-    for batch in dl:
-      optimizer.zero_grad()
-      output, masks, flow, displacements = model(batch)
-      loss = sfmnet.l1_recon_loss(batch[:,0:3], batch[:,3:6]) + \
-        lambda_flow_reg * sfmnet.l1_flow_regularization(masks, displacements)
-      loss.backward()
-      optimizer.step()
+  if load_model_path is not None:
+    checkpoint = torch.load(load_model_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer = torch.optim.Adam(model.parameters())
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    start_epoch = checkpoint['epoch']
 
 
-def show_results(input, output, masks, flow):
-  """ imgs should be size (6,H,W) """
-  fig, ax = plt.subplots(nrows=3, ncols=2, squeeze=False)
-  first = input[0:3].permute(1,2,0)
-  second = input[3:6].permute(1,2,0)
-  output = output.permute(1,2,0)
-  ax[0][0].imshow(first)
-  ax[0][0].set_title('First image')
+  dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True)
   
-  ax[1][0].imshow(second)
-  ax[1][0].set_title('Second image')
+  def loss_fn(input, output, masks, flow, displacements):
+    recon_loss = sfmnet.l1_recon_loss(input[:,3:6], output)
+    flow_regularization = sfmnet.l1_flow_regularization(masks, displacements)
+    return recon_loss + flow_reg_coeff * flow_regularization, recon_loss, flow_regularization
 
-  ax[2][0].imshow(output)
-  ax[2][0].set_title('Predicted Second Image')
+  start_time = time.monotonic()
+  test_points = ds[0:5]
 
-  ax[0][1].imshow(masks[0])
-  ax[0][1].set_title('First Mask')
+  with SummaryWriter(out_dir) as writer:
+    writer.add_text('model_summary', str(model))
+    writer.add_hparams({
+      'optimizer/lr': lr,
+      'model/total_params': model.total_params()
+    })
+    for e in range(start_epoch, start_epoch+num_epochs):
+      epoch_start_time = time.monotonic()
+      total_loss = 0.
+      total_recon_loss = 0.
+      total_flow_reg = 0.
+      for batch in dl:
+        batch_size = batch.shape[0]
+        optimizer.zero_grad()
+        output, masks, flows, displacements = model(batch)
+        loss, recon_loss, flow_reg = loss_fn(batch, output, masks, flows, displacements)
+        loss.backward()
+        optimizer.step()
+        total_loss       += loss * batch_size
+        total_recon_loss += recon_loss * batch_size
+        total_flow_reg   += flow_reg * batch_size
 
-  # This one will throw if the v.f. is identically 0
-  ax[1][1].quiver(flow[:,:,0], flow[:,:,1]) 
-  ax[1][1].set_title('Flow')
+      with torch.no_grad():
+        print(f'epoch: {e} loss: {total_loss / len(ds):.7f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
+        writer.add_scalars('Loss', {
+          'reconstruction': total_recon_loss / len(ds),
+          'flow_regularization': total_flow_reg / len(ds),
+          'total': total_loss / len(ds)
+        }, e)
+      if out_dir is not None and e % save_frequency == 0 and e > 0:
+        with torch.no_grad():
+          output, masks, flows, displacements = model(test_points)
+          for i in range(len(test_points)):
+            fig = sfmnet.visualize(test_points[i], output[i], masks[i], flows[i])
+            writer.add_figure(f'Visualization/test_point_{i}', fig, e)
+        torch.save({
+          'epoch': e,
+          'model_state_dict': model.state_dict(),
+          'optimizer_state_dict': optimizer.state_dict(),
+        }, f'{out_dir}/model_{e}.pt')
 
-  plt.show()
+  if out_dir is not None:
+    torch.save({
+      'epoch': start_epoch+num_epochs,
+      'model_state_dict': model.state_dict(),
+      'optimizer_state_dict': optimizer.state_dict(),
+    }, f'{out_dir}/model_{start_epoch+num_epochs}.pt')
 
 if __name__=='__main__':
+  # Parse args
   parser = argparse.ArgumentParser(description='Train an sfm')
-  parser.add_argument('--data_dir',
+  parser.add_argument('--data_dir', required=True,
                       help='the directory containing sequential images to use as data')
-  # parser.add_argument('log_dir',
-  #                     help='the directory to store logs')
+  parser.add_argument('--batch_size', type=int, default=16,
+                      help='the batch size used for training')
+  parser.add_argument('--num_epochs', type=int, default=2,
+                      help='the number of epochs to train for')
+  parser.add_argument('--out_dir',
+                      help='the directory to save model checkpoints and training stats to')
+  parser.add_argument('--model',
+                      help='the path to load a model to resume training with')
+  parser.add_argument('--save_freq', type=int, default=100,
+                      help='the frequency in epochs of saving the model')
+  parser.add_argument('--lr', type=float, default=0.001,
+                      help='the learning rate of the Adam optimizer')
+  parser.add_argument('--flow_reg_coeff', type=float, default=0.,
+                      help='the flow regularization coefficient')
   args = parser.parse_args()
-  train(data_dir=args.data_dir)
+
+  train(load_model_path=args.model,
+        ds=PairConsecutiveFramesDataset(args.data_dir),
+        out_dir=args.out_dir,
+        lr=args.lr,
+        num_epochs=args.num_epochs,
+        batch_size=args.batch_size,
+        save_frequency=args.save_freq,
+        flow_reg_coeff=args.flow_reg_coeff,
+  )

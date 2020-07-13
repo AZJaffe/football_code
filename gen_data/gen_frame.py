@@ -1,30 +1,56 @@
 import gfootball.env as fenv
-import matplotlib.pyplot as plt
-from matplotlib import image
-import skimage.transform as tr
-from skimage import color
+import argparse
+import imageio
+import os
+import time
 
 
-w = 1920
-h = 1080
+def gen_frames(*, out_dir, env_name, W, H, N):
+  params = locals() # Call this before adding more to local scope
+  env = fenv.create_environment(env_name=env_name, 
+    representation='pixels', 
+    render=True,
+    channel_dimensions=((W, H))
+  )
 
-env = fenv.create_environment(env_name='11_vs_11_stochastic', 
-  representation='pixels', 
-  render=True,
-  channel_dimensions=((w, h))
-)
+  path = f'{out_dir}/{env_name}_{W}x{H}'
+  try:
+    os.makedirs(path)
+  except FileExistsError:
+    pass
 
-state = env.reset()
-for _ in range(10):
-  state, _, _, _, = env.step(env.action_space.sample())
+  with open(f'{path}/description.txt', 'w') as f:
+    f.write(f'Parameters are {params}\n')
 
-fig, axes = plt.subplots(5,2, figsize=(2*w, 2*h))
+    done = True
+    e = -1 # Start at -1 since we'll increment to 0 immediate
+    start = time.monotonic()
+    for i in range(N):
+      if i % 100 == 0 and i > 0:
+        print(f'frame: {i} episode: {e} total_time_s: {time.monotonic() - start} fps: {i/(time.monotonic() - start)}')
+        f.flush()
+      if done:
+        state = env.reset()
+        done = False
+        e += 1
+      else:
+        state, _, done, _ = env.step(env.action_space.sample())
+      imageio.imwrite(f"{path}/image_{i}.png", state)
+      f.write(f'Image {i} is in episode {e}\n') #oops, bug haha
+    print(f'total_episodes: {e} total_time_s: {time.monotonic() - start} fps: {N/(time.monotonic() - start)}')
+    f.write(f'total_episodes: {e} total_time_s: {time.monotonic() - start} fps: {N/(time.monotonic() - start)}')
 
-for i in range(5):
-  width = w // (2 ** i)
-  height = h // (2 ** i)
-  downsampled = tr.resize(state, (height, width))
-  gray_downsampled = color.rgb2gray(downsampled)
-  image.imsave(f'figures/football_sizes/{width}x{height}_color.png', downsampled)
-  image.imsave(f'figures/football_sizes/{width}x{height}_gray.png', gray_downsampled, cmap='gray')
-
+if __name__ == '__main__':
+  parser = argparse.ArgumentParser(description='Generate images from gfootball environment')
+  parser.add_argument('--out_dir',
+                      help='the directory to write the data')
+  parser.add_argument('--env_name',
+                       help='the name of the environment/scenario to run')
+  parser.add_argument('--height', type=int,
+                       help='the height of the state representation')
+  parser.add_argument('--width', type=int,
+                       help='the width of the state representation')
+  parser.add_argument('--num_frames', type=int,
+                       help='the number of frames to generate')
+  args = parser.parse_args()
+  gen_frames(out_dir=args.out_dir, env_name=args.env_name, H=args.height, W=args.width, N=args.num_frames)
