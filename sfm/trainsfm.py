@@ -17,12 +17,13 @@ def train(*,
   num_epochs=1, 
   flow_reg_coeff=0.,
   batch_size=16, 
-  save_frequency=100
+  save_frequency=100,
+  device=torch.device('cpu'),
 ):
   if ds is None:
     raise 'Pass a dataset'
   input_shape = ds[0].shape
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128)
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   start_epoch = 0
 
@@ -45,11 +46,8 @@ def train(*,
   test_points = ds[0:5]
 
   with SummaryWriter(out_dir) as writer:
+    writer.add_graph(model, ds[0].unsqueeze(0))
     writer.add_text('model_summary', str(model))
-    writer.add_hparams({
-      'optimizer/lr': lr,
-      'model/total_params': model.total_params()
-    })
     for e in range(start_epoch, start_epoch+num_epochs):
       epoch_start_time = time.monotonic()
       total_loss = 0.
@@ -111,7 +109,13 @@ if __name__=='__main__':
                       help='the learning rate of the Adam optimizer')
   parser.add_argument('--flow_reg_coeff', type=float, default=0.,
                       help='the flow regularization coefficient')
+  parser.add_argument('--disable_cuda', type=bool, default=False)
   args = parser.parse_args()
+
+  if not args.disable_cuda and torch.cuda.is_available():
+    args.device = torch.device('cuda')                  
+  else:                                                   
+    args.device = torch.device('cpu')
 
   train(load_model_path=args.model,
         ds=PairConsecutiveFramesDataset(args.data_dir),
@@ -121,4 +125,5 @@ if __name__=='__main__':
         batch_size=args.batch_size,
         save_frequency=args.save_freq,
         flow_reg_coeff=args.flow_reg_coeff,
+        device=args.device,
   )
