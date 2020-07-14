@@ -54,12 +54,15 @@ def train(*,
       total_recon_loss = 0.
       total_flow_reg = 0.
       for batch in dl:
+        batch.to(device)
         batch_size = batch.shape[0]
-        optimizer.zero_grad()
         output, masks, flows, displacements = model(batch)
         loss, recon_loss, flow_reg = loss_fn(batch, output, masks, flows, displacements)
+
+        optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+
         total_loss       += loss * batch_size
         total_recon_loss += recon_loss * batch_size
         total_flow_reg   += flow_reg * batch_size
@@ -70,7 +73,7 @@ def train(*,
           'reconstruction': total_recon_loss / len(ds),
           'flow_regularization': total_flow_reg / len(ds),
           'total': total_loss / len(ds)
-        }, e)
+        }, e * len(ds))
       if out_dir is not None and e % save_frequency == 0 and e > 0:
         with torch.no_grad():
           output, masks, flows, displacements = model(test_points)
