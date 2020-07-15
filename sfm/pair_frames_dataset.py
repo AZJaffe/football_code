@@ -16,10 +16,10 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
       # Assume all images are the same size
       # Get a sample image for the size. imageio returns a tensor with shape HxWxC, and torch uses CxHxW
       im_0 = torch.tensor(imageio.imread(f'{self.root_dir}/image0.png'), dtype=torch.float32)
-      self.images = torch.zeros((self.num_images, im_0.shape[2], im_0.shape[0], im_0.shape[1]), dtype=torch.float32)
+      images = torch.zeros((self.num_images, im_0.shape[2], im_0.shape[0], im_0.shape[1]), dtype=torch.float32)
       for i in range(self.num_images):
-        self.images[i] = torch.tensor(imageio.imread(f'{self.root_dir}/image{i}.png'), dtype=torch.float32).permute(2, 0, 1) / 255
-      self.images.to(device)
+        images[i] = torch.tensor(imageio.imread(f'{self.root_dir}/image{i}.png'), dtype=torch.float32).permute(2, 0, 1) / 255
+      self.images = images.to(device)
 
   def __len__(self):
     return self.num_images - 1 # -1 since we load pairs
