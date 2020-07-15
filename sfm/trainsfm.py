@@ -44,11 +44,11 @@ def train(*,
 
   start_time = time.monotonic()
   test_points = ds[0:5]
+  model.to(device)
 
   with SummaryWriter(out_dir) as writer:
     writer.add_graph(model, ds[0].unsqueeze(0))
     writer.add_text('model_summary', str(model))
-    model.to(device)
     for e in range(start_epoch, start_epoch+num_epochs):
       epoch_start_time = time.monotonic()
       total_loss = 0.
