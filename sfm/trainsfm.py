@@ -23,7 +23,7 @@ def train(*,
   if ds is None:
     raise 'Pass a dataset'
   input_shape = ds[0].shape
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128).to(device)
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   start_epoch = 0
 
@@ -48,6 +48,7 @@ def train(*,
   with SummaryWriter(out_dir) as writer:
     writer.add_graph(model, ds[0].unsqueeze(0).to(device))
     writer.add_text('model_summary', str(model))
+    model.to(device)
     for e in range(start_epoch, start_epoch+num_epochs):
       epoch_start_time = time.monotonic()
       total_loss = 0.

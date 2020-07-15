@@ -17,7 +17,7 @@ class SfMNet(torch.nn.Module):
     self.H, self.W, self.K, self.C = H,W,K,C
     self.fc_layer_width = fc_layer_width
     # 2d affine transform
-    self.identity_affine_transform = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
+    self.identity_affine_transform = nn.Parameter(torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
 
     ####################
     #     Encoder      #
