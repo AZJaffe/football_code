@@ -115,10 +115,6 @@ def train(*,
 if __name__=='__main__':
   # Parse args
   parser = argparse.ArgumentParser(description='Train an sfm')
-  parser.add_argument('--batch_size', type=int, default=16,
-                      help='the batch size used for training')
-  parser.add_argument('--num_epochs', type=int, default=2,
-                      help='the number of epochs to train for')
   parser.add_argument('--data_dir', required=True,
                       help='the directory containing sequential images to use as data')
   parser.add_argument('--tensorboard_dir',
@@ -127,10 +123,16 @@ if __name__=='__main__':
                       help='the frequency in epochs of saving the model')
   parser.add_argument('--checkpoint_dir',
                       help='the directory to save checkpoints')
+                      
   parser.add_argument('--lr', type=float, default=0.001,
                       help='the learning rate of the Adam optimizer')
   parser.add_argument('--flow_reg_coeff', type=float, default=0.,
                       help='the flow regularization coefficient')
+  parser.add_argument('--batch_size', type=int, default=16,
+                      help='the batch size used for training')
+  parser.add_argument('--num_epochs', type=int, default=2,
+                      help='the number of epochs to train for')
+  parser.add_argument('--disable_cuda', type=bool, default=False)
 
   parser.add_argument('--fc_layer_width', type=int, default=128,
                       help='the width of the fully connected layers of the model')
@@ -138,7 +140,6 @@ if __name__=='__main__':
                       help='the number of downsampling steps (1/2 of total number of convolutional encoding layers)')
   parser.add_argument('--K', type=int, default=2,
                       help='the number of objects to predict in the scene')
-  parser.add_argument('--disable_cuda', type=bool, default=False)
 
   args = parser.parse_args()
 
