@@ -1,38 +1,61 @@
 import argparse
-import torch
-import time
-import numpy as np
+import datetime
+import os
 import matplotlib.pyplot as plt
+import numpy as np
+import time
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
 import sfmnet
 from pair_frames_dataset import PairConsecutiveFramesDataset
 
+def load(checkpoint_dir, model, optimizer):
+  if checkpoint_dir is None:
+    return 0
+  try:
+    checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pt')
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    print(f'Loaded from checkpoint at {checkpoint_path}')
+    return checkpoint['epoch']
+  except FileNotFoundError:
+    return 0
+
+def save(checkpoint_dir, model, optimizer, e):
+  if checkpoint_dir is None:
+    return
+  checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pt')
+  tmp_path = os.path.join(checkpoint_dir, 'checkpoint.pt.tmp')
+  torch.save({
+      'epoch': e,
+      'model_state_dict': model.state_dict(),
+      'optimizer_state_dict': optimizer.state_dict(),
+    }, tmp_path)
+  os.replace(tmp_path, checkpoint_path)
+  print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Checkpoint saved at {checkpoint_path}')
 
 def train(*, 
-  load_model_path,
-  out_dir, 
+  tensorboard_dir,
   ds, 
   lr=0.001,
   num_epochs=1, 
   flow_reg_coeff=0.,
   batch_size=16, 
-  save_frequency=100,
+  checkpoint_freq=100,
+  checkpoint_dir,
   device=torch.device('cpu'),
 ):
   if ds is None:
     raise 'Pass a dataset'
+
   input_shape = ds[0].shape
   model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   start_epoch = 0
-
-  if load_model_path is not None:
-    checkpoint = torch.load(load_model_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer = torch.optim.Adam(model.parameters())
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    start_epoch = checkpoint['epoch']
+  
+  if checkpoint_dir is not None:
+    start_epoch = load(checkpoint_dir, model, optimizer)
 
 
   dl = torch.utils.data.DataLoader(ds, batch_size=args.batch_size, shuffle=True)
@@ -46,7 +69,7 @@ def train(*,
   test_points = ds[0:5]
   model.to(device)
 
-  with SummaryWriter(out_dir) as writer:
+  with SummaryWriter(tensorboard_dir) as writer:
     writer.add_graph(model, ds[0].unsqueeze(0))
     writer.add_text('model_summary', str(model))
     for e in range(start_epoch, start_epoch+num_epochs):
@@ -55,7 +78,6 @@ def train(*,
       total_recon_loss = 0.
       total_flow_reg = 0.
       for batch in dl:
-        batch.to(device)
         batch_size = batch.shape[0]
         output, masks, flows, displacements = model(batch)
         loss, recon_loss, flow_reg = loss_fn(batch, output, masks, flows, displacements)
@@ -75,24 +97,16 @@ def train(*,
           'flow_regularization': total_flow_reg / len(ds),
           'total': total_loss / len(ds)
         }, e * len(ds))
-      if out_dir is not None and e % save_frequency == 0 and e > 0:
         with torch.no_grad():
           output, masks, flows, displacements = model(test_points)
           for i in range(len(test_points)):
             fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
             writer.add_figure(f'Visualization/test_point_{i}', fig, e)
-        torch.save({
-          'epoch': e,
-          'model_state_dict': model.state_dict(),
-          'optimizer_state_dict': optimizer.state_dict(),
-        }, f'{out_dir}/model_{e}.pt')
 
-  if out_dir is not None:
-    torch.save({
-      'epoch': start_epoch+num_epochs,
-      'model_state_dict': model.state_dict(),
-      'optimizer_state_dict': optimizer.state_dict(),
-    }, f'{out_dir}/model_{start_epoch+num_epochs}.pt')
+      if e % checkpoint_freq == 0 and e > 0:
+        save(checkpoint_dir, model, optimizer, e)
+  
+  save(checkpoint_dir, model, optimizer, start_epoch+num_epochs)
 
 if __name__=='__main__':
   # Parse args
@@ -103,12 +117,14 @@ if __name__=='__main__':
                       help='the batch size used for training')
   parser.add_argument('--num_epochs', type=int, default=2,
                       help='the number of epochs to train for')
-  parser.add_argument('--out_dir',
-                      help='the directory to save model checkpoints and training stats to')
+  parser.add_argument('--tensorboard_dir',
+                      help='the directory to save tensorboard events')
   parser.add_argument('--model',
                       help='the path to load a model to resume training with')
-  parser.add_argument('--save_freq', type=int, default=100,
+  parser.add_argument('--checkpoint_freq', type=int, default=100,
                       help='the frequency in epochs of saving the model')
+  parser.add_argument('--checkpoint_dir',
+                      help='the directory to save checkpoints')
   parser.add_argument('--lr', type=float, default=0.001,
                       help='the learning rate of the Adam optimizer')
   parser.add_argument('--flow_reg_coeff', type=float, default=0.,
@@ -122,14 +138,15 @@ if __name__=='__main__':
     args.device = torch.device('cpu')
 
   print(f'using device type {args.device.type}')
+  print(args)
 
-  train(load_model_path=args.model,
-        ds=PairConsecutiveFramesDataset(args.data_dir, load_all=True, device=args.device),
-        out_dir=args.out_dir,
+  train(ds=PairConsecutiveFramesDataset(args.data_dir, load_all=True, device=args.device),
+        tensorboard_dir=args.tensorboard_dir,
+        checkpoint_dir=args.checkpoint_dir,
         lr=args.lr,
         num_epochs=args.num_epochs,
         batch_size=args.batch_size,
-        save_frequency=args.save_freq,
+        checkpoint_freq=args.checkpoint_freq,
         flow_reg_coeff=args.flow_reg_coeff,
         device=args.device,
   )
