@@ -120,8 +120,10 @@ if __name__=='__main__':
   else:                                                   
     args.device = torch.device('cpu')
 
+  print(f'using device type {args.device.type} with index {args.device.index}')
+
   train(load_model_path=args.model,
-        ds=PairConsecutiveFramesDataset(args.data_dir),
+        ds=PairConsecutiveFramesDataset(args.data_dir, load_all=True, device=args.device),
         out_dir=args.out_dir,
         lr=args.lr,
         num_epochs=args.num_epochs,
