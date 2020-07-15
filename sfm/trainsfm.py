@@ -15,6 +15,7 @@ def load(checkpoint_dir, model, optimizer):
     return 0
   try:
     checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pt')
+    torch.load(checkpoint_path)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     print(f'Loaded from checkpoint at {checkpoint_path}')
@@ -45,12 +46,15 @@ def train(*,
   checkpoint_freq=100,
   checkpoint_dir,
   device=torch.device('cpu'),
+  fc_layer_width=128,
+  conv_depth=2,
+  K=1
 ):
   if ds is None:
     raise 'Pass a dataset'
 
   input_shape = ds[0].shape
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=1, fc_layer_width=128)
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=K, conv_depth=conv_depth, fc_layer_width=fc_layer_width)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   start_epoch = 0
   
@@ -111,16 +115,14 @@ def train(*,
 if __name__=='__main__':
   # Parse args
   parser = argparse.ArgumentParser(description='Train an sfm')
-  parser.add_argument('--data_dir', required=True,
-                      help='the directory containing sequential images to use as data')
   parser.add_argument('--batch_size', type=int, default=16,
                       help='the batch size used for training')
   parser.add_argument('--num_epochs', type=int, default=2,
                       help='the number of epochs to train for')
+  parser.add_argument('--data_dir', required=True,
+                      help='the directory containing sequential images to use as data')
   parser.add_argument('--tensorboard_dir',
                       help='the directory to save tensorboard events')
-  parser.add_argument('--model',
-                      help='the path to load a model to resume training with')
   parser.add_argument('--checkpoint_freq', type=int, default=100,
                       help='the frequency in epochs of saving the model')
   parser.add_argument('--checkpoint_dir',
@@ -129,7 +131,15 @@ if __name__=='__main__':
                       help='the learning rate of the Adam optimizer')
   parser.add_argument('--flow_reg_coeff', type=float, default=0.,
                       help='the flow regularization coefficient')
+
+  parser.add_argument('--fc_layer_width', type=int, default=128,
+                      help='the width of the fully connected layers of the model')
+  parser.add_argument('--conv_depth', type=int, default=2,
+                      help='the number of downsampling steps (1/2 of total number of convolutional encoding layers)')
+  parser.add_argument('--K', type=int, default=2,
+                      help='the number of objects to predict in the scene')
   parser.add_argument('--disable_cuda', type=bool, default=False)
+
   args = parser.parse_args()
 
   if not args.disable_cuda and torch.cuda.is_available():
@@ -149,4 +159,7 @@ if __name__=='__main__':
         checkpoint_freq=args.checkpoint_freq,
         flow_reg_coeff=args.flow_reg_coeff,
         device=args.device,
+        fc_layer_width=args.fc_layer_width,
+        conv_depth=args.conv_depth,
+        K=args.K
   )

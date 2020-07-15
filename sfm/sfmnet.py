@@ -9,11 +9,11 @@ class SfMNet(torch.nn.Module):
   The 6 input channels come from two 3 channel images concatenated
   along the 3rd dimension 
 
-  H and W must be divisible by 2**num_conv_encode
+  H and W must be divisible by 2**conv_depth
   """
-  def __init__(self, *, H, W, K=1, C=8, num_conv_encode=2, fc_layer_width=512):
+  def __init__(self, *, H, W, K=1, C=16, conv_depth=2, fc_layer_width=512):
     super(SfMNet, self).__init__()
-    self.factor = num_conv_encode
+    self.factor = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.fc_layer_width = fc_layer_width
     # 2d affine transform
@@ -69,7 +69,7 @@ class SfMNet(torch.nn.Module):
       'W': self.W,
       'K': self.K,
       'C': self.C,
-      'num_conv_encode': self.num_conv_encode,
+      'conv_depth': self.conv_depth,
       'fc_layer_width': self.fc_layer_width,
     }
 
