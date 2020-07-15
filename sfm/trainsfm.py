@@ -79,7 +79,7 @@ def train(*,
         with torch.no_grad():
           output, masks, flows, displacements = model(test_points)
           for i in range(len(test_points)):
-            fig = sfmnet.visualize(test_points[i], output[i], masks[i], flows[i])
+            fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
             writer.add_figure(f'Visualization/test_point_{i}', fig, e)
         torch.save({
           'epoch': e,
