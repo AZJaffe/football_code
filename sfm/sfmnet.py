@@ -59,8 +59,6 @@ class SfMNet(torch.nn.Module):
     self.fc1 = nn.Linear(embedding_dim, self.fc_layer_width)
     self.fc2 = nn.Linear(self.fc_layer_width, self.fc_layer_width)
     self.fc3 = nn.Linear(self.fc_layer_width, 2*self.K) # Predict 2d displacement for spatial transform
-    torch.nn.init.zeros_(self.fc3.weight)
-    torch.nn.init.zeros_(self.fc3.bias)
 
   def get_params(self):
     """ Get a dictionary describing the configuration of the model """
