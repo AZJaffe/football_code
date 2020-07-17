@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import sys
+import os
 import imageio
 
 class Frame:
@@ -38,6 +39,7 @@ def display_frames(frames):
 
 # size should be np array of size (2,)
 def generate_random_frames(size, radius, total_frames, speed_min, speed_max, out_dir):
+  os.makedirs(out_dir)
   loc = np.random.randint(radius, size - radius)
   for i in range(total_frames):
     n = np.random.normal([0,0], [1,1])
