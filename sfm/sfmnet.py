@@ -126,7 +126,7 @@ def l1_recon_loss(p,q):
   p,q should both have shape NxCxHxW
   """
 
-  return torch.mean(torch.abs(p - q))
+  return torch.mean(torch.sum(torch.abs(p - q), dim=(1,2,3)))
 
 def l1_flow_regularization(masks, displacements):
   """ Computes the mean L1 norm of the flow across the batch
@@ -136,13 +136,13 @@ def l1_flow_regularization(masks, displacements):
   of each object. The flow calculated here is the L1 norm of 
   the constituent flows.
 
-  masks         - shape NxCxHxW where C is the number of objects
+  masks         - shape NxCxHxW where C is the number of objects, NOT image channels!
   displacements - shape NxCx2
   """
 
-  # After the unsqueezes, the shape is NxCxHxWx2. The sum is taken across C,2 then meaned across N,H,W
+  # After the unsqueezes, the shape is NxCxHxWx1 * NxCx1x1x2. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
-    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4)),
+    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,2,3,4)),
   )
 
 def visualize(input, output, masks, flow):

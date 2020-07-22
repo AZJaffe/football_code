@@ -37,8 +37,8 @@ def save(checkpoint_file, model, optimizer, e):
 
 def train(*,
   data_dir,
-  tensorboard_dir,
-  checkpoint_file,
+  tensorboard_dir=None,
+  checkpoint_file=None,
   checkpoint_freq=100,
   load_data_to_device=True,
   disable_cuda=False,
