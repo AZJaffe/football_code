@@ -8,7 +8,7 @@ class Frame:
   def __init__(self, shape):
     self.frame = 255 * np.ones(tuple(shape) + (3,), dtype='uint8')
 
-  def draw_circle(self, centre, radius, colour=np.array([255.,0.,0.]), gradient=0.15):
+  def draw_circle(self, centre, radius, colour=np.array([255.,0.,0.]), gradient=0.5):
     """Draws a circle on the frame.
 
     Parameters:
