@@ -36,7 +36,7 @@ def save(checkpoint_file, model, optimizer, e):
   print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Checkpoint saved at {checkpoint_file}')
 
 def train(*,
-  data_dir,
+  data_dir=None,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=100,
@@ -55,6 +55,7 @@ def train(*,
     device = torch.device('cuda')
   else:                         
     device = torch.device('cpu')
+  print('training on ' + device.type
 
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
 
