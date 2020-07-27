@@ -18,7 +18,8 @@ class SfMNet(torch.nn.Module):
     self.H, self.W, self.K, self.C = H,W,K,C
     self.fc_layer_width = fc_layer_width
     # 2d affine transform
-    self.identity_affine_transform = nn.Parameter(torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
+    self.register_buffer('identity_affine_transform', \
+      torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
 
     ####################
     #     Encoder      #
@@ -164,7 +165,7 @@ def visualize(input, output, mask, flow, spacing=3):
   ax[0][1].set_title('Predicted Second Image')
 
   # This one will throw if the v.f. is identically 0
-  ax[1][1].imshow(mask, cmap='Greens')
+  ax[1][1].imshow(mask.squeeze(), cmap='Greens')
   xflow = flow[:,:,0]
   yflow = flow[:,:,1]
   i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
