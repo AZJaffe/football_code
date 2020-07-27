@@ -55,7 +55,7 @@ def train(*,
     device = torch.device('cuda')
   else:                         
     device = torch.device('cpu')
-  print('training on ' + device.type
+  print('training on ' + device.type)
 
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
 
