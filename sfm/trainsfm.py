@@ -50,9 +50,10 @@ def train(*,
   batch_size=16, 
   num_epochs=1, 
 ):
+  print(locals())
   if disable_cuda is False and torch.cuda.is_available():
-    device = torch.device('cuda')                  
-  else:                                                   
+    device = torch.device('cuda')
+  else:                         
     device = torch.device('cpu')
 
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
@@ -79,14 +80,14 @@ def train(*,
   with SummaryWriter(tensorboard_dir) as writer:
     writer.add_graph(model, ds[0].unsqueeze(0))
     writer.add_text('model_summary', str(model))
-    writer.add_scalars('hparams', {
-      'lr':lr,
-      'batch_size': batch_size,
-      'flow_reg_coeff': flow_reg_coeff,
-      'conv_depth': conv_depth,
-      'fc_layer_width': fc_layer_width,
-      'K': K,
-    })
+    # writer.add_scalars('hparams', {
+    #   'lr':lr,
+    #   'batch_size': batch_size,
+    #   'flow_reg_coeff': flow_reg_coeff,
+    #   'conv_depth': conv_depth,
+    #   'fc_layer_width': fc_layer_width,
+    #   'K': K,
+    # })
     for e in range(start_epoch, start_epoch+num_epochs):
       epoch_start_time = time.monotonic()
       total_loss = 0.

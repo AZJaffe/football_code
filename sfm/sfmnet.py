@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 import matplotlib.pyplot as plt
+import numpy as np
 
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
@@ -101,18 +102,18 @@ class SfMNet(torch.nn.Module):
     displacements = self.fc3(embedding).reshape((batch_size, self.K, 2))
 
     # Reshape displacements and masks so they can be broadcast
-    flow = torch.sum(displacements.reshape((batch_size, self.K, 1, 1, 2)) * masks.unsqueeze(-1), dim=1)
+    flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
     # flow has size (batch_size, H, W, 2)
 
     # identity is not a function of any of the forward parameters
     identity = F.affine_grid( \
-      # Need to batchify identtiy_affine_transform
+      # Need to batchify identitiy_affine_transform
       self.identity_affine_transform.unsqueeze(0).repeat(batch_size, 1, 1), \
       (batch_size, 3, self.H, self.W), \
       align_corners=False
     )
   
-    grid =  identity + flow
+    grid = identity + flow
     out = F.grid_sample(input[:,0:3], grid, align_corners=False)
     
     return out, masks, flow, displacements
@@ -145,11 +146,11 @@ def l1_flow_regularization(masks, displacements):
     torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,2,3,4)),
   )
 
-def visualize(input, output, masks, flow):
+def visualize(input, output, mask, flow, spacing=3):
   """ imgs should be size (6,H,W) """
   H = input.shape[1]
   W = input.shape[2]
-  fig, ax = plt.subplots(nrows=2, ncols=2, squeeze=False)
+  fig, ax = plt.subplots(nrows=2, ncols=2, squeeze=False, figsize=(W/3,H/3))
   first = input[0:3].permute(1,2,0)
   second = input[3:6].permute(1,2,0)
   output = output.permute(1,2,0)
@@ -163,8 +164,13 @@ def visualize(input, output, masks, flow):
   ax[0][1].set_title('Predicted Second Image')
 
   # This one will throw if the v.f. is identically 0
-  ax[1][1].imshow(masks[0], cmap='Greens') 
-  ax[1][1].quiver(flow[:,:,0] * W, flow[:,:,1] * H, scale=1, scale_units='xy', color='red') 
+  ax[1][1].imshow(mask, cmap='Greens')
+  xflow = flow[:,:,0]
+  yflow = flow[:,:,1]
+  i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+  mask = np.logical_or((i % spacing != 0), (j % spacing != 0))
+  mx = np.ma.masked_array(xflow, mask=mask)
+  my = np.ma.masked_array(yflow, mask=mask)
+  ax[1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
   ax[1][1].set_title('Mask and Flow')
-
   return fig
