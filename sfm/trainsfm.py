@@ -36,7 +36,7 @@ def save(checkpoint_file, model, optimizer, e):
   print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Checkpoint saved at {checkpoint_file}')
 
 def train(*,
-  data_dir=None,
+  data_dir,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=100,

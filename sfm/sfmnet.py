@@ -58,9 +58,9 @@ class SfMNet(torch.nn.Module):
     #     FC Layers     #
     #####################
     embedding_dim = self.C * H * W // (2 ** self.factor)
-    self.fc1 = nn.Linear(embedding_dim, self.fc_layer_width)
-    self.fc2 = nn.Linear(self.fc_layer_width, self.fc_layer_width)
-    self.fc3 = nn.Linear(self.fc_layer_width, 2*self.K) # Predict 2d displacement for spatial transform
+    self.fc1 = nn.Linear(embedding_dim, self.fc_layer_width, bias=False)
+    self.fc2 = nn.Linear(self.fc_layer_width, self.fc_layer_width, bias=False)
+    self.fc3 = nn.Linear(self.fc_layer_width, 2*self.K, bias=False) # Predict 2d displacement for spatial transform
 
   def get_params(self):
     """ Get a dictionary describing the configuration of the model """
@@ -158,20 +158,20 @@ def visualize(input, output, mask, flow, spacing=3):
   ax[0][0].imshow(first)
   ax[0][0].set_title('First image')
   
-  ax[1][0].imshow(second)
-  ax[1][0].set_title('Second image')
+  ax[0][1].imshow(second)
+  ax[0][1].set_title('Second image')
 
-  ax[0][1].imshow(output)
-  ax[0][1].set_title('Predicted Second Image')
+  ax[1][1].imshow(output)
+  ax[1][1].set_title('Predicted Second Image')
 
   # This one will throw if the v.f. is identically 0
-  ax[1][1].imshow(mask.squeeze(), cmap='Greens')
+  ax[1][0].imshow(mask.squeeze(), cmap='Greens')
   xflow = flow[:,:,0]
   yflow = flow[:,:,1]
   i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
   mask = np.logical_or((i % spacing != 0), (j % spacing != 0))
   mx = np.ma.masked_array(xflow, mask=mask)
   my = np.ma.masked_array(yflow, mask=mask)
-  ax[1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
-  ax[1][1].set_title('Mask and Flow')
+  ax[1][0].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+  ax[1][0].set_title('Mask and Flow')
   return fig
