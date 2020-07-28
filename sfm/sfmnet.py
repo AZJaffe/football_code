@@ -147,6 +147,27 @@ def l1_flow_regularization(masks, displacements):
     torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,2,3,4)),
   )
 
+def l1_mask_regularization(mask):
+  """ Computes the mean L1 of the masks
+
+  mask - shape NxCxHxW where C is the number of objects, NOT image channels!
+  """
+
+  # After the unsqueezes, the shape is NxCxHxWx1 * NxCx1x1x2. The sum is taken across C,H,W,2 then meaned across N
+  return torch.mean( \
+    torch.sum(torch.abs(mask), dim=(1,2,3,))
+  )
+
+def l2_displacement_regularization(displacement):
+  """ Computes the mean L1 of the masks
+
+  displacement - shape NxCx2 where C is the number of objects, NOT image channels!
+  """
+
+  return torch.mean( \
+    torch.sum(torch.square(displacement), dim=(1,2,))
+  )
+
 def visualize(input, output, mask, flow, spacing=3):
   """ imgs should be size (6,H,W) """
   H = input.shape[1]

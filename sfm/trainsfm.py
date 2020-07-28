@@ -37,16 +37,19 @@ def save(checkpoint_file, model, optimizer, e):
 
 def train(*,
   data_dir,
+  sliding_data=True,
   tensorboard_dir=None,
   checkpoint_file=None,
-  checkpoint_freq=100,
+  checkpoint_freq=None,
   load_data_to_device=True,
   disable_cuda=False,
   K=1,
   fc_layer_width=128,
   conv_depth=2,
   lr=0.001,
-  flow_reg_coeff=0.,
+  flowreg_coeff=0.,
+  maskreg_coeff=0.,
+  displreg_coeff=0.,
   batch_size=16, 
   num_epochs=1, 
 ):
@@ -71,8 +74,11 @@ def train(*,
   
   def loss_fn(input, output, masks, flow, displacements):
     recon_loss = sfmnet.l1_recon_loss(input[:,3:6], output)
-    flow_regularization = sfmnet.l1_flow_regularization(masks, displacements)
-    return recon_loss + flow_reg_coeff * flow_regularization, recon_loss, flow_regularization
+    flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(masks, displacements)
+    maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(masks)
+    displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacements)
+
+    return recon_loss + flowreg + maskreg + displreg, recon_loss
 
   start_time = time.monotonic()
   test_points = ds[0:5]
@@ -90,14 +96,18 @@ def train(*,
     #   'K': K,
     # })
     for e in range(start_epoch, start_epoch+num_epochs):
+      with torch.no_grad():
+        output, masks, flows, displacements = model(test_points)
+        for i in range(len(test_points)):
+          fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
+          writer.add_figure(f'Visualization/test_point_{i}', fig, len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
-      total_flow_reg = 0.
       for batch in dl:
         batch_size = batch.shape[0]
         output, masks, flows, displacements = model(batch)
-        loss, recon_loss, flow_reg = loss_fn(batch, output, masks, flows, displacements)
+        loss, recon_loss = loss_fn(batch, output, masks, flows, displacements)
 
         optimizer.zero_grad()
         loss.backward()
@@ -105,25 +115,20 @@ def train(*,
 
         total_loss       += loss * batch_size
         total_recon_loss += recon_loss * batch_size
-        total_flow_reg   += flow_reg * batch_size
 
       with torch.no_grad():
         print(f'epoch: {e} loss: {total_loss / len(ds):.7f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
         writer.add_scalars('Loss', {
           'reconstruction': total_recon_loss / len(ds),
-          'flow_regularization': total_flow_reg / len(ds),
           'total': total_loss / len(ds)
         }, e * len(ds))
-        with torch.no_grad():
-          output, masks, flows, displacements = model(test_points)
-          for i in range(len(test_points)):
-            fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
-            writer.add_figure(f'Visualization/test_point_{i}', fig, e)
 
-      if e % checkpoint_freq == 0 and e > 0:
+      if checkpoint_file is not None and e % checkpoint_freq == 0 and e > 0:
         save(checkpoint_file, model, optimizer, e)
   
-  save(checkpoint_file, model, optimizer, start_epoch+num_epochs)
+  if checkpoint_file is not None:
+    save(checkpoint_file, model, optimizer, start_epoch+num_epochs)
+  #return model
 
 if __name__=='__main__':
   fire.Fire(train)
