@@ -41,6 +41,7 @@ def train(*,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=None,
+  vis_freq=10,
   load_data_to_device=True,
   disable_cuda=False,
   K=1,
@@ -96,11 +97,12 @@ def train(*,
     #   'K': K,
     # })
     for e in range(start_epoch, start_epoch+num_epochs):
-      with torch.no_grad():
-        output, masks, flows, displacements = model(test_points)
-        for i in range(len(test_points)):
-          fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
-          writer.add_figure(f'Visualization/test_point_{i}', fig, len(ds))
+      if e % vis_freq == 0:
+        with torch.no_grad():
+          output, masks, flows, displacements = model(test_points)
+          for i in range(len(test_points)):
+            fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
+            writer.add_figure(f'Visualization/test_point_{i}', fig, len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
