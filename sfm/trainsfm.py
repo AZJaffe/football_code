@@ -103,7 +103,7 @@ def train(*,
           output, mask, flow, displacement = model(test_points)
           output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
           for i in range(len(test_points)):
-            fig = sfmnet.visualize(cpu_test_points[i], output[i], masks[i], flows[i], displacement[i])
+            fig = sfmnet.visualize(cpu_test_points[i], output[i], mask[i], flow[i], displacement[i])
             writer.add_figure(f'Visualization/test_point_{i}', fig, e * len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
