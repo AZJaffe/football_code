@@ -83,6 +83,7 @@ def train(*,
 
   start_time = time.monotonic()
   test_points = ds[0:5]
+  cpu_test_points = test_points.cpu()
   model.to(device)
 
   with SummaryWriter(tensorboard_dir) as writer:
@@ -99,10 +100,11 @@ def train(*,
     for e in range(start_epoch, start_epoch+num_epochs):
       if e % vis_freq == 0:
         with torch.no_grad():
-          output, masks, flows, displacements = model(test_points)
+          output, mask, flow, displacement = model(test_points)
+          output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
           for i in range(len(test_points)):
-            fig = sfmnet.visualize(test_points[i].cpu(), output[i].cpu(), masks[i].cpu(), flows[i].cpu())
-            writer.add_figure(f'Visualization/test_point_{i}', fig, len(ds))
+            fig = sfmnet.visualize(cpu_test_points[i], output[i], masks[i], flows[i], displacement[i])
+            writer.add_figure(f'Visualization/test_point_{i}', fig, e * len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
