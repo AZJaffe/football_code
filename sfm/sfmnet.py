@@ -12,11 +12,12 @@ class SfMNet(torch.nn.Module):
 
   H and W must be divisible by 2**conv_depth
   """
-  def __init__(self, *, H, W, K=1, C=16, conv_depth=2, fc_layer_width=512):
+  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, fc_layer_width=512):
     super(SfMNet, self).__init__()
     self.factor = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.fc_layer_width = fc_layer_width
+    self.im_channels = im_channels
     # 2d affine transform
     self.register_buffer('identity_affine_transform', \
       torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
@@ -24,7 +25,7 @@ class SfMNet(torch.nn.Module):
     ####################
     #     Encoder      #
     ####################
-    conv_encode = nn.ModuleList([nn.Conv2d(6, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
+    conv_encode = nn.ModuleList([nn.Conv2d(im_channels, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
     bns_encode = nn.ModuleList([nn.BatchNorm2d(self.C)])
     # Out channels is at most 2 ** (factor + 5) == 256 for factor == 3
     for i in range(self.factor):
@@ -128,7 +129,7 @@ def l1_recon_loss(p,q):
   p,q should both have shape NxCxHxW
   """
 
-  return torch.mean(torch.sum(torch.abs(p - q), dim=(1,2,3)))
+  return torch.mean(torch.sum(torch.abs(p - q), dim=(1,)))
 
 def l1_flow_regularization(masks, displacements):
   """ Computes the mean L1 norm of the flow across the batch
@@ -142,9 +143,9 @@ def l1_flow_regularization(masks, displacements):
   displacements - shape NxCx2
   """
 
-  # After the unsqueezes, the shape is NxCxHxWx1 * NxCx1x1x2. The sum is taken across C,H,W,2 then meaned across N
+  # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
-    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,2,3,4)),
+    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4),)
   )
 
 def l1_mask_regularization(mask):
@@ -155,7 +156,7 @@ def l1_mask_regularization(mask):
 
   # After the unsqueezes, the shape is NxCxHxWx1 * NxCx1x1x2. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
-    torch.sum(torch.abs(mask), dim=(1,2,3,))
+    torch.sum(torch.abs(mask), dim=(1,))
   )
 
 def l2_displacement_regularization(displacement):
