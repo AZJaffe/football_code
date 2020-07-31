@@ -45,6 +45,7 @@ def train(*,
   load_data_to_device=True,
   disable_cuda=False,
   K=1,
+  C=16,
   fc_layer_width=128,
   conv_depth=2,
   lr=0.001,
@@ -64,7 +65,7 @@ def train(*,
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
 
   input_shape = ds[0].shape
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], K=K, conv_depth=conv_depth, fc_layer_width=fc_layer_width)
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], im_channels=input_shape[0], C=C, K=K, conv_depth=conv_depth, fc_layer_width=fc_layer_width)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   start_epoch = 0
   
@@ -84,6 +85,7 @@ def train(*,
   start_time = time.monotonic()
   test_points = ds[0:5]
   cpu_test_points = test_points.cpu()
+  print(cpu_test_points.shape)
   model.to(device)
 
   with SummaryWriter(tensorboard_dir) as writer:

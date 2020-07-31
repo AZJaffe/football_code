@@ -3,6 +3,7 @@ import numpy as np
 import sys
 import os
 import imageio
+import fire
 
 class Frame:
   def __init__(self, shape):
@@ -38,18 +39,20 @@ def display_frames(frames):
   plt.show()
 
 # size should be np array of size (2,)
-def generate_random_frames(size, out_dir, radius=3, total_frames=1000,):
-  os.makedirs(out_dir)
-  speed = 5
-  top_right = np.array([
-    [5,0], [4,1], [3,2], [2,3], [1,4],
-  ])
-  # top_right = np.array([
-  #   [5,0], [4,1], [3,2], [2,3], [1,4],
-  #   [0,5], [-1,4], [-2, 3], [-3,2], [-4,1],
-  #   [-5,0], [-4,-1], [-3,-2], [-2,-3], [-1,-4],
-  #   [0,-5], [1,-4],[2,-3],[3,-2],[4,-1],
-  # ])
+def generate_random_frames(out_dir, H=24, W=40, radius=3, speed=5, total_frames=1000,):
+  size = np.array([W, H])
+  try:
+    os.makedirs(out_dir)
+  except FileExistsError:
+    s = input(f'The directory {out_dir} exists, do you wish to delete it? [y/n]:')
+    if s == 'y':
+      # TODO
+      exit(1)
+    else:
+      exit(0)
+  x = np.arange(speed,0,-1)
+  y = np.arange(0,speed,1)
+  top_right = np.column_stack((x,y))
   rot_90_cw = np.array([
     [0,-1],
     [1, 0]
@@ -61,7 +64,7 @@ def generate_random_frames(size, out_dir, radius=3, total_frames=1000,):
     top_right @ rot_90_cw @ rot_90_cw @ rot_90_cw,
   ))
   for i in range(total_frames):
-    centre = np.random.randint(radius + speed, size - radius - speed)
+    centre = np.random.randint(radius - 1 + speed, size - radius - speed + 1)
     d = ds[np.random.randint(0, ds.shape[0])]
     centre_new = centre + d
     if i % 10 == 0:
@@ -73,20 +76,4 @@ def generate_random_frames(size, out_dir, radius=3, total_frames=1000,):
 
 
 if __name__ == '__main__':
-  import argparse  
-  parser = argparse.ArgumentParser(description='Generates .pngs of circle bouncing')
-  parser.add_argument('out_dir',
-                      help='The directory to write to')
-  parser.add_argument('height', type=int, default=288)
-  parser.add_argument('width', type=int, default=512)
-  parser.add_argument('--num_frames', type=int, default=1000)
-  parser.add_argument('--radius', type=int, default=2 )
-
-  args = parser.parse_args()
-  print(f'Will save to {args.out_dir}')
-  generate_random_frames(
-    np.array([args.height, args.width]), 
-    args.out_dir,
-    radius=args.radius,
-    total_frames=args.num_frames
-  )
+  fire.Fire(generate_random_frames)
