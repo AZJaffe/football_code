@@ -19,63 +19,40 @@ def load(checkpoint_file, model, optimizer):
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     print(f'Loaded from checkpoint at {checkpoint_file}')
-    return checkpoint['epoch']
+    return
   except FileNotFoundError:
-    return 0
+    return
 
 def save(checkpoint_file, model, optimizer, e):
   if checkpoint_file is None:
     return
   tmp_file = checkpoint_file + '.tmp'
   torch.save({
-      'epoch': e,
       'model_state_dict': model.state_dict(),
       'optimizer_state_dict': optimizer.state_dict(),
     }, tmp_file)
   os.replace(tmp_file, checkpoint_file)
   print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Checkpoint saved at {checkpoint_file}')
 
-def train(*,
-  data_dir,
-  sliding_data=True,
+def train_loop(*,
+  dl,
+  ds,
+  model,
+  optimizer,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=None,
   vis_freq=10,
-  load_data_to_device=True,
-  disable_cuda=False,
-  K=1,
-  C=16,
-  fc_layer_width=128,
-  conv_depth=2,
-  lr=0.001,
   flowreg_coeff=0.,
   maskreg_coeff=0.,
   displreg_coeff=0.,
-  batch_size=16, 
   num_epochs=1, 
 ):
-  print(locals())
-  if disable_cuda is False and torch.cuda.is_available():
-    device = torch.device('cuda')
-  else:                         
-    device = torch.device('cpu')
-  print('training on ' + device.type)
-
-  ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
 
   input_shape = ds[0].shape
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], im_channels=input_shape[0], C=C, K=K, conv_depth=conv_depth, fc_layer_width=fc_layer_width)
-  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-  start_epoch = 0
-  
-  if checkpoint_file is not None:
-    start_epoch = load(checkpoint_file, model, optimizer)
-
-  dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
-  
+  im_channels = input_shape[0] // 2
   def loss_fn(input, output, masks, flow, displacements):
-    recon_loss = sfmnet.l1_recon_loss(input[:,3:6], output)
+    recon_loss = sfmnet.l1_recon_loss(input[:,im_channels:im_channels*2], output)
     flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(masks, displacements)
     maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(masks)
     displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacements)
@@ -83,10 +60,8 @@ def train(*,
     return recon_loss + flowreg + maskreg + displreg, recon_loss
 
   start_time = time.monotonic()
-  test_points = ds[0:5]
+  test_points = ds[0:2]
   cpu_test_points = test_points.cpu()
-  print(cpu_test_points.shape)
-  model.to(device)
 
   with SummaryWriter(tensorboard_dir) as writer:
     writer.add_graph(model, ds[0].unsqueeze(0))
@@ -99,14 +74,13 @@ def train(*,
     #   'fc_layer_width': fc_layer_width,
     #   'K': K,
     # })
-    for e in range(start_epoch, start_epoch+num_epochs):
+    for e in range(0, num_epochs):
       if e % vis_freq == 0:
         with torch.no_grad():
           output, mask, flow, displacement = model(test_points)
           output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
-          for i in range(len(test_points)):
-            fig = sfmnet.visualize(cpu_test_points[i], output[i], mask[i], flow[i])
-            writer.add_figure(f'Visualization/test_point_{i}', fig, e * len(ds))
+          fig = sfmnet.visualize(cpu_test_points, output, mask, flow, displacement)
+          writer.add_figure(f'Visualization', fig, e * len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
@@ -133,8 +107,66 @@ def train(*,
         save(checkpoint_file, model, optimizer, e)
   
   if checkpoint_file is not None:
-    save(checkpoint_file, model, optimizer, start_epoch+num_epochs)
-  #return model
+    save(checkpoint_file, model, optimizer)
+  return model
+
+def train(*,
+  data_dir,
+  sliding_data=True,
+  tensorboard_dir=None,
+  checkpoint_file=None,
+  checkpoint_freq=None,
+  vis_freq=10,
+  load_data_to_device=True,
+  disable_cuda=False,
+  K=1,
+  C=16,
+  fc_layer_width=128,
+  num_hidden_layers=1,
+  conv_depth=2,
+  lr=0.001,
+  flowreg_coeff=0.,
+  maskreg_coeff=0.,
+  displreg_coeff=0.,
+  batch_size=16, 
+  num_epochs=1, 
+):
+  print(locals())
+  if disable_cuda is False and torch.cuda.is_available():
+    device = torch.device('cuda')
+  else:                         
+    device = torch.device('cpu')
+  print('training on ' + device.type)
+
+  ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
+
+  input_shape = ds[0].shape
+  im_channels = ds[0].shape[0] // 2
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], im_channels=im_channels, \
+    C=C, K=K, conv_depth=conv_depth, \
+    hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
+  )
+  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  
+  if checkpoint_file is not None:
+    load(checkpoint_file, model, optimizer)
+
+  dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
+
+  train_loop(
+    model=model,
+    ds=ds,
+    dl=dl,
+    optimizer=optimizer,
+    tensorboard_dir=tensorboard_dir,
+    checkpoint_file=None,
+    checkpoint_freq=None,
+    vis_freq=10,
+    flowreg_coeff=flowreg_coeff,
+    maskreg_coeff=maskreg_coeff,
+    displreg_coeff=displreg_coeff,
+    num_epochs=1, 
+  )
 
 if __name__=='__main__':
-  fire.Fire(train)
+  m = fire.Fire(train)
