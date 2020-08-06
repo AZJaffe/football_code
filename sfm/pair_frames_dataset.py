@@ -19,9 +19,14 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
       # Assume all images are the same size
       # Get a sample image for the size. imageio returns a tensor with shape HxWxC, and torch uses CxHxW
       im_0 = torch.tensor(imageio.imread(f'{self.root_dir}/image0.png'), dtype=torch.float32)
+      if len(im_0.shape) == 2:
+        im_0 = im_0.unsqueeze(2)
       images = torch.empty((self.num_images, im_0.shape[2], im_0.shape[0], im_0.shape[1]), dtype=torch.float32)
       for i in range(self.num_images):
-        images[i] = torch.tensor(imageio.imread(f'{self.root_dir}/image{i}.png'), dtype=torch.float32).permute(2, 0, 1) / 255
+        im = torch.tensor(imageio.imread(f'{self.root_dir}/image{i}.png'), dtype=torch.float32)
+        if len(im.shape) == 2:
+          im = im.unsqueeze(2)
+        images[i] = im.permute(2, 0, 1) / 255
       self.images = images.to(device)
 
   def __len__(self):
@@ -34,7 +39,8 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
     if isinstance(idx, slice):
       return torch.cat([self[i].unsqueeze(0) for i in range(*idx.indices(len(self)))])
     elif isinstance(idx, int):
-      # imageio reads as WxH
+      if idx >= len(self):
+        raise IndexError
       if self.sliding is True:
         idx1 = idx
         idx2 = idx+1
@@ -42,11 +48,15 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
         idx1 = idx*2
         idx2 = idx*2+1
       if self.images is None:
-        im_1 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx1}.png'), dtype=torch.float32).permute(2, 0, 1) / 255
-        im_2 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx2}.png'), dtype=torch.float32).permute(2, 0, 1) / 255
+        im_1 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx1}.png'), dtype=torch.float32)
+        im_2 = torch.tensor(imageio.imread(f'{self.root_dir}/image{idx2}.png'), dtype=torch.float32)
+        if len(im_1.shape) == 2:
+          im_1 = im_1.unsqueeze(2)
+          im_2 = im_2.unsqueeze(2)
+        im_1 = im_1.permute(2, 0, 1) / 255
+        im_2 = im_2.permute(2, 0, 1) / 255
         return torch.cat((im_1, im_2), dim=0).to(self.device)
       else:
         return torch.cat((self.images[idx1], self.images[idx2]))
     else:
-
       raise TypeError("Invalid index operation")
