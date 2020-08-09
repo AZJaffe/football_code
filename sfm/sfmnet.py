@@ -124,7 +124,7 @@ class SfMNet(torch.nn.Module):
     
     return out, masks, flow, displacements
 
-def l1_recon_loss(p,q):
+def l1_recon_loss(p,q, reduction=torch.mean):
   """ Computes the mean L1 reconstructions loss of a batch
 
   p - The first image in the sequence
@@ -133,7 +133,11 @@ def l1_recon_loss(p,q):
   p,q should both have shape NxCxHxW
   """
 
-  return torch.mean(torch.sum(torch.abs(p - q), dim=(1,)))
+  loss = torch.mean(torch.sum(torch.abs(p - q), dim=(1,)), dim=(1,2))
+  if reduction is not None:
+    return reduction(loss)
+  else:
+    return loss
 
 def l1_flow_regularization(masks, displacements):
   """ Computes the mean L1 norm of the flow across the batch
@@ -158,7 +162,6 @@ def l1_mask_regularization(mask):
   mask - shape NxCxHxW where C is the number of objects, NOT image channels!
   """
 
-  # After the unsqueezes, the shape is NxCxHxWx1 * NxCx1x1x2. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
     torch.sum(torch.abs(mask), dim=(1,))
   )
@@ -180,6 +183,7 @@ def visualize(input, output, mask, flow, displacement, spacing=3):
   C = input.shape[1] // 2
   B = input.shape[0]
   fig, ax = plt.subplots(figsize=(6, B*4), nrows=2*B, ncols=2, squeeze=False,)
+  loss = l1_recon_loss(input[:,C:2*C], output, reduction=None)
   for b in range(0, input.shape[0]):
     first = input[b,0:C].permute(1,2,0)
     second = input[b,C:2*C].permute(1,2,0)
@@ -189,15 +193,14 @@ def visualize(input, output, mask, flow, displacement, spacing=3):
       second = second.squeeze(2)
       out = out.squeeze(2)
     ax[2*b][0].imshow(first, vmin=0., vmax=1.)
-    ax[2*b][0].set_title('First image')
+    ax[2*b][0].set_title('1st Input Image')
     
     ax[2*b][1].imshow(second, vmin=0., vmax=1.)
-    ax[2*b][1].set_title('Second image')
+    ax[2*b][1].set_title('2nd Input Image')
 
     ax[2*b+1][1].imshow(out, vmin=0., vmax=1.)
-    ax[2*b+1][1].set_title('Predicted Second Image')
+    ax[2*b+1][1].set_title(f'Predicted 2nd Image (l={loss[b]:.4f})')
 
-    # This one will throw if the v.f. is identically 0
     ax[2*b+1][0].imshow(mask[b].squeeze(), cmap='Greens', vmin=0., vmax=1.)
     xflow = flow[b,:,:,0]
     yflow = flow[b,:,:,1]

@@ -36,20 +36,20 @@ def save(checkpoint_file, model, optimizer, e):
 
 def train_loop(*,
   dl,
-  ds,
+  vis_point=None,
   model,
   optimizer,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=None,
-  vis_freq=10,
+  vis_freq=1000,
   flowreg_coeff=0.,
   maskreg_coeff=0.,
   displreg_coeff=0.,
-  num_epochs=1, 
+  num_epochs=1,
 ):
-
-  input_shape = ds[0].shape
+  input_sample = dl.dataset[0]
+  input_shape = input_sample.shape
   im_channels = input_shape[0] // 2
   def loss_fn(input, output, masks, flow, displacements):
     recon_loss = sfmnet.l1_recon_loss(input[:,im_channels:im_channels*2], output)
@@ -59,12 +59,11 @@ def train_loop(*,
 
     return recon_loss + flowreg + maskreg + displreg, recon_loss
 
-  start_time = time.monotonic()
-  test_points = ds[0:2]
-  cpu_test_points = test_points.cpu()
+  if vis_point is not None:
+    cpu_vis_point = vis_point.cpu()
 
   with SummaryWriter(tensorboard_dir) as writer:
-    writer.add_graph(model, ds[0].unsqueeze(0))
+    writer.add_graph(model, input_sample.unsqueeze(0))
     writer.add_text('model_summary', str(model))
     # writer.add_scalars('hparams', {
     #   'lr':lr,
@@ -74,13 +73,9 @@ def train_loop(*,
     #   'fc_layer_width': fc_layer_width,
     #   'K': K,
     # })
+    start_time = time.monotonic()
+    step = 0
     for e in range(0, num_epochs):
-      if e % vis_freq == 0:
-        with torch.no_grad():
-          output, mask, flow, displacement = model(test_points)
-          output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
-          fig = sfmnet.visualize(cpu_test_points, output, mask, flow, displacement)
-          writer.add_figure(f'Visualization', fig, e * len(ds))
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
@@ -96,15 +91,23 @@ def train_loop(*,
         total_loss       += loss * batch_size
         total_recon_loss += recon_loss * batch_size
 
-      with torch.no_grad():
-        print(f'epoch: {e} loss: {total_loss / len(ds):.7f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
-        writer.add_scalars('Loss', {
-          'reconstruction': total_recon_loss / len(ds),
-          'total': total_loss / len(ds)
-        }, e * len(ds))
+        if checkpoint_file is not None and step % checkpoint_freq == 0:
+          save(checkpoint_file, model, optimizer)
+        if vis_point is not None and e % vis_freq == 0:
+          with torch.no_grad():
+            output, mask, flow, displacement = model(vis_point)
+            output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
+            fig = sfmnet.visualize(cpu_vis_point, output, mask, flow, displacement)
+            writer.add_figure(f'Visualization', fig, step)
+        step += 1
 
-      if checkpoint_file is not None and e % checkpoint_freq == 0 and e > 0:
-        save(checkpoint_file, model, optimizer, e)
+      with torch.no_grad():
+        print(f'epoch: {e} recon_loss: {total_recon_loss / len(dl.dataset):.5f} loss: {total_loss / len(dl.dataset):.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
+        writer.add_scalars('Loss', {
+          'reconstruction': total_recon_loss / len(dl.dataset),
+          'total': total_loss / len(dl.dataset)
+        }, step)
+
   
   if checkpoint_file is not None:
     save(checkpoint_file, model, optimizer)
@@ -130,6 +133,7 @@ def train(*,
   displreg_coeff=0.,
   batch_size=16, 
   num_epochs=1, 
+  n_vis_point=5,
 ):
   print(locals())
   if disable_cuda is False and torch.cuda.is_available():
@@ -155,7 +159,7 @@ def train(*,
 
   train_loop(
     model=model,
-    ds=ds,
+    vis_point=ds[0:n_vis_point],
     dl=dl,
     optimizer=optimizer,
     tensorboard_dir=tensorboard_dir,

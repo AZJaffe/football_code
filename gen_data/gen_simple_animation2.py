@@ -7,9 +7,9 @@ import fire
 
 class Frame:
   def __init__(self, shape):
-    self.frame = 255 * np.ones(tuple(shape) + (3,), dtype='uint8')
+    self.frame = 255 * np.ones((shape[1], shape[0]), dtype='uint8')
 
-  def draw_circle(self, centre, radius, colour=np.array([255.,0.,0.]), gradient=0.2):
+  def draw_circle(self, centre, radius, colour=0., gradient=0.2):
     """Draws a circle on the frame.
 
     Parameters:
