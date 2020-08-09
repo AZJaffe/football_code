@@ -8,6 +8,12 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import imageio 
 import datetime
+import sys
+import pickle
+
+
+with open(sys.argv[1], 'wb') as f:
+    pickle.dump('', f)
 
 im_channels=1
 H=4
@@ -52,7 +58,7 @@ def train_model(lr=0.005, hidden_layer_widths=[16], num_epochs=1, maskreg=0., di
         optimizer=optimizer,
         num_epochs=num_epochs,
         vis_freq=None,
-        tensorboard_dir=f'./tb/08-09/{time}',
+        tensorboard_dir=None,
         maskreg_coeff=maskreg,
         displreg_coeff=displreg
     )
@@ -108,6 +114,5 @@ for k,hparam in enumerate(hparams):
 for r in result:
     print(r['mediangood'])
 
-import pickle
-with open('./data.p', 'wb') as f:
+with open(sys.argv[1], 'wb') as f:
     pickle.dump(result, f)
