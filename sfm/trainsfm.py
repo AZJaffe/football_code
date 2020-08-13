@@ -46,24 +46,13 @@ def train_loop(*,
   flowreg_coeff=0.,
   maskreg_coeff=0.,
   displreg_coeff=0.,
+  forwbackwreg_coeff=0.,
   num_epochs=1,
 ):
-  input_sample = dl.dataset[0]
-  input_shape = input_sample.shape
-  im_channels = input_shape[0] // 2
-  def loss_fn(input, output, masks, flow, displacements):
-    recon_loss = sfmnet.l1_recon_loss(input[:,im_channels:im_channels*2], output)
-    flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(masks, displacements)
-    maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(masks)
-    displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacements)
-
-    return recon_loss + flowreg + maskreg + displreg, recon_loss
-
-  if vis_point is not None:
-    cpu_vis_point = vis_point.cpu()
 
   with SummaryWriter(tensorboard_dir) as writer:
-    writer.add_graph(model, input_sample.unsqueeze(0))
+    sample_input = torch.cat((dl.dataset[0][0], dl.dataset[0][1]))
+    writer.add_graph(model, sample_input.unsqueeze(0))
     writer.add_text('model_summary', str(model))
     # writer.add_scalars('hparams', {
     #   'lr':lr,
@@ -73,40 +62,56 @@ def train_loop(*,
     #   'fc_layer_width': fc_layer_width,
     #   'K': K,
     # })
-    start_time = time.monotonic()
     step = 0
+    len_ds = len(dl.dataset[0])
+    start_time = time.monotonic()
     for e in range(0, num_epochs):
       epoch_start_time = time.monotonic()
       total_loss = 0.
       total_recon_loss = 0.
-      for batch in dl:
-        batch_size = batch.shape[0]
-        output, masks, flows, displacements = model(batch)
-        loss, recon_loss = loss_fn(batch, output, masks, flows, displacements)
+      for im1, im2 in dl:
+        batch_size = im1.shape[0]
+        forwardbatch = torch.cat((im1, im2), dim=1)
+        backwardbatch = torch.cat((im2, im1), dim=1)
+        input = torch.cat((forwardbatch, backwardbatch), dim=0)
+        output, mask, flow, displacement = model(input)
+
+        # The target of the first B outputs is im2 and the target of the second B outputs is im1
+        recon_loss = sfmnet.l1_recon_loss(torch.cat((im2, im1), dim=0), output) 
+        # backward forward regularization induces a prior on the output of the network
+        # that encourages the output from going forward in time is consistent with
+        # the output from going backward in time.
+        # Precisely, the masks should be the same and the displacements should be the negations of each other 
+        forwbackwreg = forwbackwreg_coeff * (
+          torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
+          + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
+        )
+        flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
+        maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
+        displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
+
+        loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        total_loss       += loss * batch_size
-        total_recon_loss += recon_loss * batch_size
+        # 2 * because the forward model was ran thru with (im1,im2) and (im2, im1), twice the size of the batch
+        total_loss       += loss * 2 * batch_size 
+        total_recon_loss += recon_loss * 2 * batch_size
 
         if checkpoint_file is not None and step % checkpoint_freq == 0:
           save(checkpoint_file, model, optimizer)
-        if vis_point is not None and e % vis_freq == 0:
-          with torch.no_grad():
-            output, mask, flow, displacement = model(vis_point)
-            output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
-            fig = sfmnet.visualize(cpu_vis_point, output, mask, flow, displacement)
-            writer.add_figure(f'Visualization', fig, step)
+        if vis_point is not None and step % vis_freq == 0:
+          fig = sfmnet.visualize(model, *vis_point)
+          writer.add_figure(f'Visualization', fig, step)
         step += 1
 
-      with torch.no_grad():
-        print(f'epoch: {e} recon_loss: {total_recon_loss / len(dl.dataset):.5f} loss: {total_loss / len(dl.dataset):.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
-        writer.add_scalars('Loss', {
-          'reconstruction': total_recon_loss / len(dl.dataset),
-          'total': total_loss / len(dl.dataset)
-        }, step)
+      print(f'epoch: {e} recon_loss: {total_recon_loss / len_ds:.5f} loss: {total_loss / len_ds:.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
+      writer.add_scalars('Loss', {
+        'reconstruction': total_recon_loss / len_ds,
+        'total': total_loss / len_ds
+      }, step)
 
   
   if checkpoint_file is not None:
@@ -119,7 +124,7 @@ def train(*,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=None,
-  vis_freq=10,
+  vis_freq=1000,
   load_data_to_device=True,
   disable_cuda=False,
   K=1,
@@ -131,6 +136,7 @@ def train(*,
   flowreg_coeff=0.,
   maskreg_coeff=0.,
   displreg_coeff=0.,
+  forwbackwreg_coeff=0.,
   batch_size=16, 
   num_epochs=1, 
   n_vis_point=5,
@@ -144,9 +150,8 @@ def train(*,
 
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
 
-  input_shape = ds[0].shape
-  im_channels = ds[0].shape[0] // 2
-  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], im_channels=im_channels, \
+  input_shape = ds[0][0].shape
+  model = sfmnet.SfMNet(H=input_shape[1], W=input_shape[2], im_channels=input_shape[0], \
     C=C, K=K, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
@@ -159,17 +164,18 @@ def train(*,
 
   train_loop(
     model=model,
-    vis_point=ds[0:n_vis_point],
     dl=dl,
     optimizer=optimizer,
     tensorboard_dir=tensorboard_dir,
     checkpoint_file=None,
     checkpoint_freq=None,
-    vis_freq=10,
+    vis_freq=vis_freq,
+    vis_point=ds[0:n_vis_point],
     flowreg_coeff=flowreg_coeff,
     maskreg_coeff=maskreg_coeff,
     displreg_coeff=displreg_coeff,
-    num_epochs=1, 
+    forwbackwreg_coeff=forwbackwreg_coeff,
+    num_epochs=num_epochs, 
   )
 
 if __name__=='__main__':

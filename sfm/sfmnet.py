@@ -176,39 +176,57 @@ def l2_displacement_regularization(displacement):
     torch.sum(torch.square(displacement), dim=(1,2,))
   )
 
-def visualize(input, output, mask, flow, displacement, spacing=3):
-  """ imgs should be size (6,H,W) """
-  H = input.shape[2]
-  W = input.shape[3]
-  C = input.shape[1] // 2
-  B = input.shape[0]
-  fig, ax = plt.subplots(figsize=(6, B*4), nrows=2*B, ncols=2, squeeze=False,)
-  loss = l1_recon_loss(input[:,C:2*C], output, reduction=None)
-  for b in range(0, input.shape[0]):
-    first = input[b,0:C].permute(1,2,0)
-    second = input[b,C:2*C].permute(1,2,0)
-    out = output[b].permute(1,2,0)
+def visualize(model, im1, im2, spacing=3):
+  """ im1 and im2 should be size BxCxHxW """
+  with torch.no_grad():
+    forwardbatch = torch.cat((im1, im2), dim=1)
+    backwardbatch = torch.cat((im2, im1), dim=1)
+    input = torch.cat((forwardbatch, backwardbatch), dim=0)
+    output, mask, flow, displacement = model(input)
+
+  B,C,H,W = im1.shape
+  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=3, squeeze=False,)
+  loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
+
+  i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
+  vmask = np.logical_or((i % spacing != 0), (j % spacing != 0))
+  for b in range(B):
+    first = im1[b].permute(1,2,0)
+    second = im2[b].permute(1,2,0)
+    predfirst = output[b+B].permute(1,2,0)
+    predsecond = output[b].permute(1,2,0)
     if C == 1:
       first = first.squeeze(2)
       second = second.squeeze(2)
-      out = out.squeeze(2)
+      predfirst = predfirst.squeeze(2)
+      predsecond = predsecond.squeeze(2)
     ax[2*b][0].imshow(first, vmin=0., vmax=1.)
     ax[2*b][0].set_title('1st Input Image')
     
-    ax[2*b][1].imshow(second, vmin=0., vmax=1.)
-    ax[2*b][1].set_title('2nd Input Image')
+    ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
+    ax[2*b+1][0].set_title('2nd Input Image')
 
-    ax[2*b+1][1].imshow(out, vmin=0., vmax=1.)
-    ax[2*b+1][1].set_title(f'Predicted 2nd Image (l={loss[b]:.4f})')
+    ax[2*b][1].imshow(predfirst, vmin=0., vmax=1.)
+    ax[2*b][1].set_title(f'Predicted 1st Image\n(l={loss[b+B]:.4f})', wrap=True)
 
-    ax[2*b+1][0].imshow(mask[b].squeeze(), cmap='Greens', vmin=0., vmax=1.)
+    ax[2*b+1][1].imshow(predsecond, vmin=0., vmax=1.)
+    ax[2*b+1][1].set_title(f'Predicted 2nd Image\n (l={loss[b]:.4f})', wrap=True)
+
     xflow = flow[b,:,:,0]
     yflow = flow[b,:,:,1]
-    i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-    vmask = np.logical_or((i % spacing != 0), (j % spacing != 0))
     mx = np.ma.masked_array(xflow, mask=vmask)
     my = np.ma.masked_array(yflow, mask=vmask)
-    ax[2*b+1][0].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b+1][0].set_title('Mask and Flow. d=(%.2f,%.2f)' % (displacement[b,0,0],displacement[b,0,1]))
+    ax[2*b+1][2].imshow(mask[b].squeeze(), cmap='Greens', vmin=0., vmax=1.)
+    ax[2*b+1][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+    ax[2*b+1][2].set_title('Mask and Flow (2nd->1st)\n d=(%.2f,%.2f)' % (displacement[b,0,0],displacement[b,0,1]), wrap=True)
+
+
+    xflow = flow[b+B,:,:,0]
+    yflow = flow[b+B,:,:,1]
+    mx = np.ma.masked_array(xflow, mask=vmask)
+    my = np.ma.masked_array(yflow, mask=vmask)
+    ax[2*b][2].imshow(mask[b+B].squeeze(), cmap='Greens', vmin=0., vmax=1.)
+    ax[2*b][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+    ax[2*b][2].set_title('Mask and Flow (2nd->1st)\n d=(%.2f,%.2f)' % (displacement[b+B,0,0],displacement[b+B,0,1]), wrap=True)
   fig.tight_layout()
   return fig

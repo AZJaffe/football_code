@@ -37,7 +37,9 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
   
   def __getitem__(self, idx):
     if isinstance(idx, slice):
-      return torch.cat([self[i].unsqueeze(0) for i in range(*idx.indices(len(self)))])
+      im1 = torch.cat([self[i][0].unsqueeze(0) for i in range(*idx.indices(len(self)))])
+      im2 = torch.cat([self[i][1].unsqueeze(0) for i in range(*idx.indices(len(self)))])
+      return (im1, im2)
     elif isinstance(idx, int):
       if idx >= len(self):
         raise IndexError
@@ -55,8 +57,8 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
           im_2 = im_2.unsqueeze(2)
         im_1 = im_1.permute(2, 0, 1) / 255
         im_2 = im_2.permute(2, 0, 1) / 255
-        return torch.cat((im_1, im_2), dim=0).to(self.device)
+        return (im_1.to(self.device), im_2.to(self.device))
       else:
-        return torch.cat((self.images[idx1], self.images[idx2]))
+        return (self.images[idx1], self.images[idx2])
     else:
       raise TypeError("Invalid index operation")
