@@ -40,6 +40,10 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
       im1 = torch.cat([self[i][0].unsqueeze(0) for i in range(*idx.indices(len(self)))])
       im2 = torch.cat([self[i][1].unsqueeze(0) for i in range(*idx.indices(len(self)))])
       return (im1, im2)
+    elif isinstance(idx, list):
+      im1 = torch.cat([self[i][0].unsqueeze(0) for i in idx])
+      im2 = torch.cat([self[i][1].unsqueeze(0) for i in idx])
+      return (im1, im2)
     elif isinstance(idx, int):
       if idx >= len(self):
         raise IndexError

@@ -39,7 +39,8 @@ def noop_callback(*a, **k):
   pass
 
 def train_loop(*,
-  dl,
+  dl_train,
+  dl_validation,
   vis_point=None,
   model,
   optimizer,
@@ -51,15 +52,14 @@ def train_loop(*,
   epoch_callback=noop_callback
 ):
 
-  sample_input = torch.cat((dl.dataset[0][0], dl.dataset[0][1]))
   step = 0
-  len_ds = len(dl.dataset[0])
+  len_ds = len(dl_train.dataset[0])
   start_time = time.monotonic()
   for e in range(0, num_epochs):
     epoch_start_time = time.monotonic()
     total_loss = 0.
     total_recon_loss = 0.
-    for im1, im2 in dl:
+    for im1, im2 in dl_train:
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
       backwardbatch = torch.cat((im2, im1), dim=1)
@@ -91,13 +91,27 @@ def train_loop(*,
       total_recon_loss += recon_loss * 2 * batch_size
 
       step += 1
-    epoch_recon_loss = total_recon_loss / len_ds
-    epoch_loss = total_loss / len_ds
-    print(f'epoch: {e} recon_loss: {epoch_recon_loss:.5f} loss: {epoch_loss:.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
+    
+    epoch_recon_loss = total_recon_loss / (2 * len_ds)
+    epoch_loss = total_loss / (2 * len_ds)
+    with torch.no_grad():
+      # Just evaluate the reconstruction loss for the validation set
+      model.eval()
+      total_loss = 0.
+      for im1,im2 in dl_validation:
+        batch_size = im1.shape[0]
+        input = torch.cat((im1, im2), dim=1)
+        output, mask, flow, displacement = model(input)
+        loss = sfmnet.l1_recon_loss(im2, output) 
+        total_loss += loss * batch_size
+      avg_loss = total_loss / len(dl_validation.dataset[0])
+      model.train()
+    print(f'epoch: {e} Loss/Validation/Recon: {avg_loss:5f} Loss/Train/Recon: {epoch_recon_loss:.5f} Loss/Train/Total: {epoch_loss:.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
 
     epoch_callback(epoch=e, step=step, metric={
-      'recon_loss': epoch_recon_loss,
-      'total_loss': epoch_loss,
+      'train_recon_loss': epoch_recon_loss,
+      'train_total_loss': epoch_loss,
+      'validation_recon_loss': avg_loss
     })
 
   return model
@@ -109,6 +123,7 @@ def train(*,
   checkpoint_file=None,
   checkpoint_freq=None,
   load_data_to_device=True,
+  validation_split=0.1,
   disable_cuda=False,
   K=1,
   C=16,
@@ -133,7 +148,11 @@ def train(*,
   print('training on ' + device.type)
 
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
-  dl = torch.utils.data.DataLoader(ds, batch_size=batch_size, shuffle=True)
+  n_validation = int(len(ds) * validation_split)
+  n_train = len(ds) - n_validation
+  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation])
+  dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
+  dl_validation = torch.utils.data.DataLoader(ds_validation, batch_size = 2 * batch_size, shuffle=False)
   im_channels, H, W = ds[0][0].shape
 
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
@@ -155,29 +174,32 @@ def train(*,
     writer = None
 
   if n_vis_point is not None:
-    vis_point = ds[0:n_vis_point]
+    vis_point = ds_validation[0:n_vis_point]
   else:
     vis_point = None
 
-  best_recon_loss = 100
+  best_validation = math.inf
   def epoch_callback(*, step, epoch, metric):
-    nonlocal best_recon_loss
-    if best_recon_loss > metric['recon_loss']:
-      best_recon_loss = metric['recon_loss']
+    nonlocal best_validation
+    best_validation = min(best_validation, metric['validation_recon_loss'])
     if writer is not None:
-      writer.add_scalars('Loss', {
-        'reconstruction': metric['recon_loss'],
-        'total': metric['total_loss'],
+      writer.add_scalars('Lossn', {
+        'Train/Recon': metric['train_recon_loss'],
+        'Validation/Recon': metric['validation_recon_loss'],
+        'Train/Total': metric['train_total_loss'],
       }, step)
     if checkpoint_file is not None and epoch % checkpoint_freq == 0:
       save(checkpoint_file, model, optimizer)
-    if vis_point is not None and epoch % vis_freq == 0:
+    if writer is not None and vis_point is not None and epoch % vis_freq == 0:
+      model.eval()
       fig = sfmnet.visualize(model, *vis_point)
+      model.train()
       writer.add_figure(f'Visualization', fig, step)
 
   train_loop(
     model=model,
-    dl=dl,
+    dl_train=dl_train,
+    dl_validation=dl_validation,
     optimizer=optimizer,
     flowreg_coeff=flowreg_coeff,
     maskreg_coeff=maskreg_coeff,
@@ -195,7 +217,7 @@ def train(*,
       'flowreg': flowreg_coeff,
       'forwbackwreg': forwbackwreg_coeff,
     },{
-      'hparam/reconloss': best_recon_loss
+      'Validation/Recon': best_validation
     })
 
   if checkpoint_file is not None:

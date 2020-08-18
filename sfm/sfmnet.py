@@ -220,13 +220,12 @@ def visualize(model, im1, im2, spacing=3):
     ax[2*b+1][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b+1][2].set_title('Mask and Flow (2nd->1st)\n d=(%.2f,%.2f)' % (displacement[b,0,0],displacement[b,0,1]), wrap=True)
 
-
     xflow = flow[b+B,:,:,0]
     yflow = flow[b+B,:,:,1]
     mx = np.ma.masked_array(xflow, mask=vmask)
     my = np.ma.masked_array(yflow, mask=vmask)
     ax[2*b][2].imshow(mask[b+B].squeeze(), cmap='Greens', vmin=0., vmax=1.)
     ax[2*b][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b][2].set_title('Mask and Flow (2nd->1st)\n d=(%.2f,%.2f)' % (displacement[b+B,0,0],displacement[b+B,0,1]), wrap=True)
+    ax[2*b][2].set_title('Mask and Flow (1st->2nd)\n d=(%.2f,%.2f)' % (displacement[b+B,0,0],displacement[b+B,0,1]), wrap=True)
   fig.tight_layout()
   return fig
