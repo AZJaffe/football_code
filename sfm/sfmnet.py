@@ -176,20 +176,26 @@ def l2_displacement_regularization(displacement):
     torch.sum(torch.square(displacement), dim=(1,2,))
   )
 
-def visualize(model, im1, im2, spacing=3):
+def visualize(model, im1, im2, spacing=None):
   """ im1 and im2 should be size BxCxHxW """
+
+
   with torch.no_grad():
     forwardbatch = torch.cat((im1, im2), dim=1)
     backwardbatch = torch.cat((im2, im1), dim=1)
     input = torch.cat((forwardbatch, backwardbatch), dim=0)
     output, mask, flow, displacement = model(input)
+    K = mask.shape[1]
+
 
   B,C,H,W = im1.shape
-  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=3, squeeze=False,)
+  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
   loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
 
+  if spacing is None:
+    spacing = [W//20, H//20]
   i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-  vmask = np.logical_or((i % spacing != 0), (j % spacing != 0))
+  vmask = np.logical_or((i % spacing[0] != 0), (j % spacing[1] != 0))
   for b in range(B):
     first = im1[b].permute(1,2,0)
     second = im2[b].permute(1,2,0)
@@ -200,32 +206,36 @@ def visualize(model, im1, im2, spacing=3):
       second = second.squeeze(2)
       predfirst = predfirst.squeeze(2)
       predsecond = predsecond.squeeze(2)
+
+    ######### First Row ###############
     ax[2*b][0].imshow(first, vmin=0., vmax=1.)
-    ax[2*b][0].set_title('1st Input Image')
-    
-    ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
-    ax[2*b+1][0].set_title('2nd Input Image')
+    ax[2*b][0].set_title('1st Input')
 
+    mx = np.ma.masked_array(flow[b+B,:,:,0], mask=vmask)
+    my = np.ma.masked_array(flow[b+B,:,:,1], mask=vmask)
     ax[2*b][1].imshow(predfirst, vmin=0., vmax=1.)
-    ax[2*b][1].set_title(f'Predicted 1st Image\n(l={loss[b+B]:.4f})', wrap=True)
+    ax[2*b][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+    ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
 
+    for k in range(K):
+      ax[2*b][2+k].imshow(predfirst, vmin=0., vmax=1.)
+      ax[2*b][2+k].imshow(np.ma.masked_less(mask[b+B,k], 0.5), alpha=0.4, vmin=0., vmax=1., cmap='Oranges')
+      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
+
+    ######### Second Row ###############
+    ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
+    ax[2*b+1][0].set_title('2nd Input')
+
+    mx = np.ma.masked_array(flow[b,:,:,0], mask=vmask)
+    my = np.ma.masked_array(flow[b,:,:,1], mask=vmask)
     ax[2*b+1][1].imshow(predsecond, vmin=0., vmax=1.)
-    ax[2*b+1][1].set_title(f'Predicted 2nd Image\n (l={loss[b]:.4f})', wrap=True)
+    ax[2*b+1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+    ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
 
-    xflow = flow[b,:,:,0]
-    yflow = flow[b,:,:,1]
-    mx = np.ma.masked_array(xflow, mask=vmask)
-    my = np.ma.masked_array(yflow, mask=vmask)
-    ax[2*b+1][2].imshow(mask[b].squeeze(), cmap='Greens', vmin=0., vmax=1.)
-    ax[2*b+1][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b+1][2].set_title('Mask and Flow (2nd->1st)\n d=(%.2f,%.2f)' % (displacement[b,0,0],displacement[b,0,1]), wrap=True)
-
-    xflow = flow[b+B,:,:,0]
-    yflow = flow[b+B,:,:,1]
-    mx = np.ma.masked_array(xflow, mask=vmask)
-    my = np.ma.masked_array(yflow, mask=vmask)
-    ax[2*b][2].imshow(mask[b+B].squeeze(), cmap='Greens', vmin=0., vmax=1.)
-    ax[2*b][2].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b][2].set_title('Mask and Flow (1st->2nd)\n d=(%.2f,%.2f)' % (displacement[b+B,0,0],displacement[b+B,0,1]), wrap=True)
+    for k in range(K):
+      ax[2*b+1][2+k].imshow(predsecond, vmin=0., vmax=1.)
+      ax[2*b+1][2+k].imshow(np.ma.masked_less(mask[b,k], 0.5), alpha=0.4, vmin=0., vmax=1., cmap='Oranges')
+      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b,k,0], displacement[b,k,1]))
+    
   fig.tight_layout()
   return fig

@@ -53,7 +53,6 @@ def train_loop(*,
 ):
 
   step = 0
-  len_ds = len(dl_train.dataset[0])
   start_time = time.monotonic()
   for e in range(0, num_epochs):
     epoch_start_time = time.monotonic()
@@ -67,7 +66,7 @@ def train_loop(*,
       output, mask, flow, displacement = model(input)
 
       # The target of the first B outputs is im2 and the target of the second B outputs is im1
-      recon_loss = sfmnet.l1_recon_loss(torch.cat((im2, im1), dim=0), output) 
+      recon_loss = sfmnet.l1_recon_loss(torch.cat((im2, im1), dim=0), output)
       # backward forward regularization induces a prior on the output of the network
       # that encourages the output from going forward in time is consistent with
       # the output from going backward in time.
@@ -92,19 +91,22 @@ def train_loop(*,
 
       step += 1
     
-    epoch_recon_loss = total_recon_loss / (2 * len_ds)
-    epoch_loss = total_loss / (2 * len_ds)
+    len_train_ds = len(dl_train.dataset)
+    len_validate_ds = len(dl_validation.dataset)
+    epoch_recon_loss = total_recon_loss / (2 * len_train_ds)
+    epoch_loss = total_loss / (2 * len_train_ds)
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
+      assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       model.eval()
       total_loss = 0.
       for im1,im2 in dl_validation:
         batch_size = im1.shape[0]
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
-        loss = sfmnet.l1_recon_loss(im2, output) 
+        loss = sfmnet.l1_recon_loss(im2, output)
         total_loss += loss * batch_size
-      avg_loss = total_loss / len(dl_validation.dataset[0])
+      avg_loss = total_loss / len_validate_ds
       model.train()
     print(f'epoch: {e} Loss/Validation/Recon: {avg_loss:5f} Loss/Train/Recon: {epoch_recon_loss:.5f} Loss/Train/Total: {epoch_loss:.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
 
@@ -150,7 +152,8 @@ def train(*,
   ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
-  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation])
+  print(f'Validation size {n_validation}, train size {n_train}')
+  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
   dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
   dl_validation = torch.utils.data.DataLoader(ds_validation, batch_size = 2 * batch_size, shuffle=False)
   im_channels, H, W = ds[0][0].shape
@@ -193,6 +196,7 @@ def train(*,
     if writer is not None and vis_point is not None and epoch % vis_freq == 0:
       model.eval()
       fig = sfmnet.visualize(model, *vis_point)
+      plt.show()
       model.train()
       writer.add_figure(f'Visualization', fig, step)
 
