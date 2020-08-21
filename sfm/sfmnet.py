@@ -209,8 +209,8 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b][0].imshow(first, vmin=0., vmax=1.)
     ax[2*b][0].set_title('1st Input')
 
-    mx = np.ma.masked_array(flow[b+B,:,:,0], mask=vmask)
-    my = np.ma.masked_array(flow[b+B,:,:,1], mask=vmask)
+    mx = np.ma.masked_array(flow[b+B,:,:,0].cpu(), mask=vmask)
+    my = np.ma.masked_array(flow[b+B,:,:,1].cpu(), mask=vmask)
     ax[2*b][1].imshow(predfirst, vmin=0., vmax=1.)
     ax[2*b][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
@@ -224,8 +224,8 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
     ax[2*b+1][0].set_title('2nd Input')
 
-    mx = np.ma.masked_array(flow[b,:,:,0], mask=vmask)
-    my = np.ma.masked_array(flow[b,:,:,1], mask=vmask)
+    mx = np.ma.masked_array(flow[b,:,:,0].cpu(), mask=vmask)
+    my = np.ma.masked_array(flow[b,:,:,1].cpu(), mask=vmask)
     ax[2*b+1][1].imshow(predsecond, vmin=0., vmax=1.)
     ax[2*b+1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
