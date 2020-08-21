@@ -178,29 +178,27 @@ def l2_displacement_regularization(displacement):
 
 def visualize(model, im1, im2, spacing=None):
   """ im1 and im2 should be size BxCxHxW """
-
-
   with torch.no_grad():
     forwardbatch = torch.cat((im1, im2), dim=1)
     backwardbatch = torch.cat((im2, im1), dim=1)
     input = torch.cat((forwardbatch, backwardbatch), dim=0)
     output, mask, flow, displacement = model(input)
+    loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
     K = mask.shape[1]
 
 
   B,C,H,W = im1.shape
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
-  loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
 
   if spacing is None:
     spacing = [W//20, H//20]
   i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
   vmask = np.logical_or((i % spacing[0] != 0), (j % spacing[1] != 0))
   for b in range(B):
-    first = im1[b].permute(1,2,0)
-    second = im2[b].permute(1,2,0)
-    predfirst = output[b+B].permute(1,2,0)
-    predsecond = output[b].permute(1,2,0)
+    first = im1[b].permute(1,2,0).cpu()
+    second = im2[b].permute(1,2,0).cpu()
+    predfirst = output[b+B].permute(1,2,0).cpu()
+    predsecond = output[b].permute(1,2,0).cpu()
     if C == 1:
       first = first.squeeze(2)
       second = second.squeeze(2)
