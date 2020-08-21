@@ -162,6 +162,7 @@ def train(*,
     C=C, K=K, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
+  model.to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   
   if checkpoint_file is not None:
