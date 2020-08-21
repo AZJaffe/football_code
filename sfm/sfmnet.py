@@ -176,6 +176,9 @@ def l2_displacement_regularization(displacement):
     torch.sum(torch.square(displacement), dim=(1,2,))
   )
 
+def rgb2gray(rgb):
+    return np.dot(rgb[...,:3], [0.299, 0.587, 0.144])
+
 def visualize(model, im1, im2, spacing=None):
   """ im1 and im2 should be size BxCxHxW """
   with torch.no_grad():
@@ -190,8 +193,10 @@ def visualize(model, im1, im2, spacing=None):
   im1 = im1.cpu()
   im2 = im2.cpu()
 
+  cmaps = ['Reds', 'Greens', 'Blues', 'Purples', 'YlOrBr']
+
   B,C,H,W = im1.shape
-  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
+  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(3), squeeze=False,)
 
   if spacing is None:
     spacing = [W//20, H//20]
@@ -218,10 +223,11 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
 
+    ax[2*b][2].imshow(rgb2gray(predfirst), cmap='gray', vmin=0., vmax=1.)
     for k in range(K):
-      ax[2*b][2+k].imshow(predfirst, vmin=0., vmax=1.)
-      ax[2*b][2+k].imshow(np.ma.masked_less(mask[b+B,k], 0.5), alpha=0.4, vmin=0., vmax=1., cmap='Oranges')
-      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
+      ax[2*b][2].imshow(mask[b+B, k], alpha=0.4, vmin=0., vmax=1., cmap=cmaps[k])
+      ax[2*b][2].set_title('Masks')
+      #\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
 
     ######### Second Row ###############
     ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
@@ -233,10 +239,9 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b+1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
 
+    ax[2*b+1][2].imshow(rgb2gray(predsecond), cmap='gray', vmin=0., vmax=1.)
     for k in range(K):
-      ax[2*b+1][2+k].imshow(predsecond, vmin=0., vmax=1.)
-      ax[2*b+1][2+k].imshow(np.ma.masked_less(mask[b,k], 0.5), alpha=0.4, vmin=0., vmax=1., cmap='Oranges')
-      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b,k,0], displacement[b,k,1]))
+      ax[2*b+1][2].imshow(mask[b,k], alpha=0.4, vmin=0., vmax=1., cmap=cmaps[k])
     
   fig.tight_layout()
   return fig
