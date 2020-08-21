@@ -183,8 +183,8 @@ def visualize(model, im1, im2, spacing=None):
     backwardbatch = torch.cat((im2, im1), dim=1)
     input = torch.cat((forwardbatch, backwardbatch), dim=0)
     output, mask, flow, displacement = model(input)
-    output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
     loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
+    output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
     K = mask.shape[1]
 
   im1 = im1.cpu()
