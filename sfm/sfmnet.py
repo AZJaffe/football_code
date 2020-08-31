@@ -140,9 +140,12 @@ class SfMNet(torch.nn.Module):
 #   else:
 #     return loss
 
-def dssim_loss(p,q):
-  l = kornia.losses.ssim(11, reduction='mean')
-  return (1 - l(p,q)) / 2
+def dssim_loss(p,q, reduction=torch.mean):
+  loss = torch.mean(kornia.losses.ssim(p, q, 11), dim=(1,2,3))
+  if reduction is not None:
+    return reduction(loss)
+  else:
+    return loss
 
 def l1_flow_regularization(masks, displacements):
   """ Computes the mean L1 norm of the flow across the batch
@@ -195,7 +198,7 @@ def visualize(model, im1, im2, spacing=None):
     input = torch.cat((forwardbatch, backwardbatch), dim=0)
     output, mask, flow, displacement = model(input)
     output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
-    loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
+    loss = dssim_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
     K = mask.shape[1]
 
   im1 = im1.cpu()
@@ -231,7 +234,7 @@ def visualize(model, im1, im2, spacing=None):
 
     for k in range(K):
       ax[2*b][2+k].imshow(rgb2gray(predfirst), cmap='gray', vmin=0., vmax=1.)
-      ax[2*b][2+k].imshow((mask[b+B,k], 0.5), alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
+      ax[2*b][2+k].imshow(mask[b+B,k], alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
       ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
 
     ######### Second Row ###############

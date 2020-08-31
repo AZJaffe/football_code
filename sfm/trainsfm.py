@@ -227,7 +227,7 @@ def train(*,
 
   if checkpoint_file is not None:
     save(checkpoint_file, model, optimizer)
-  return model
+  # return model
 
 if __name__=='__main__':
   m = fire.Fire(train)
