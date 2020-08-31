@@ -66,7 +66,7 @@ def train_loop(*,
       output, mask, flow, displacement = model(input)
 
       # The target of the first B outputs is im2 and the target of the second B outputs is im1
-      recon_loss = sfmnet.l1_recon_loss(torch.cat((im2, im1), dim=0), output)
+      recon_loss = sfmnet.dssim_loss(torch.cat((im2, im1), dim=0), output)
       # backward forward regularization induces a prior on the output of the network
       # that encourages the output from going forward in time is consistent with
       # the output from going backward in time.
@@ -104,7 +104,7 @@ def train_loop(*,
         batch_size = im1.shape[0]
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
-        loss = sfmnet.l1_recon_loss(im2, output)
+        loss = sfmnet.dssim_loss(im2, output)
         total_loss += loss * batch_size
       avg_loss = total_loss / len_validate_ds
       model.train()
@@ -197,7 +197,7 @@ def train(*,
     if writer is not None and vis_point is not None and epoch % vis_freq == 0:
       model.eval()
       fig = sfmnet.visualize(model, *vis_point)
-      plt.show()
+      fig.show()
       model.train()
       writer.add_figure(f'Visualization', fig, step)
 
@@ -227,6 +227,7 @@ def train(*,
 
   if checkpoint_file is not None:
     save(checkpoint_file, model, optimizer)
+  return model
 
 if __name__=='__main__':
   m = fire.Fire(train)

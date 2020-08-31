@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
+import kornia
 
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
@@ -12,7 +13,7 @@ class SfMNet(torch.nn.Module):
 
   H and W must be divisible by 2**conv_depth
   """
-  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
+  def __init__(self, *, H, W, im_channels=3, dropout_likelihood=0.5, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
     """ fc_layer_spec is the number of fully connected layers BEFORE the output layer """
     super(SfMNet, self).__init__()
     self.factor = conv_depth
@@ -124,20 +125,24 @@ class SfMNet(torch.nn.Module):
     
     return out, masks, flow, displacements
 
-def l1_recon_loss(p,q, reduction=torch.mean):
-  """ Computes the mean L1 reconstructions loss of a batch
+# def l1_recon_loss(p,q, reduction=torch.mean):
+#   """ Computes the mean L1 reconstructions loss of a batch
 
-  p - The first image in the sequence
-  q - The second image in the sequence
+#   p - The first image in the sequence
+#   q - The second image in the sequence
 
-  p,q should both have shape NxCxHxW
-  """
+#   p,q should both have shape NxCxHxW
+#   """
 
-  loss = torch.mean(torch.sum(torch.abs(p - q), dim=(1,)), dim=(1,2))
-  if reduction is not None:
-    return reduction(loss)
-  else:
-    return loss
+#   loss = torch.mean(torch.sum(torch.abs(p - q), dim=(1,)), dim=(1,2))
+#   if reduction is not None:
+#     return reduction(loss)
+#   else:
+#     return loss
+
+def dssim_loss(p,q):
+  l = kornia.losses.ssim(11, reduction='mean')
+  return (1 - l(p,q)) / 2
 
 def l1_flow_regularization(masks, displacements):
   """ Computes the mean L1 norm of the flow across the batch
@@ -176,27 +181,28 @@ def l2_displacement_regularization(displacement):
     torch.sum(torch.square(displacement), dim=(1,2,))
   )
 
-def rgb2gray(rgb):
-    return np.dot(rgb[...,:3], [0.299, 0.587, 0.144])
-
 def visualize(model, im1, im2, spacing=None):
   """ im1 and im2 should be size BxCxHxW """
+  def rgb2gray(rgb):
+    if len(rgb.shape) == 2 or rgb.shape[2] == 1:
+      # In this case, rgb is actually only single channel not rgb.
+      return rgb
+    return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140])
+
   with torch.no_grad():
     forwardbatch = torch.cat((im1, im2), dim=1)
     backwardbatch = torch.cat((im2, im1), dim=1)
     input = torch.cat((forwardbatch, backwardbatch), dim=0)
     output, mask, flow, displacement = model(input)
-    loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
     output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
+    loss = l1_recon_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
     K = mask.shape[1]
 
   im1 = im1.cpu()
   im2 = im2.cpu()
 
-  cmaps = ['Reds', 'Greens', 'Blues', 'Purples', 'YlOrBr']
-
   B,C,H,W = im1.shape
-  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(3), squeeze=False,)
+  fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
   if spacing is None:
     spacing = [W//20, H//20]
@@ -223,11 +229,10 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
 
-    ax[2*b][2].imshow(rgb2gray(predfirst), cmap='gray', vmin=0., vmax=1.)
     for k in range(K):
-      ax[2*b][2].imshow(mask[b+B, k], alpha=0.4, vmin=0., vmax=1., cmap=cmaps[k])
-      ax[2*b][2].set_title('Masks')
-      #\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
+      ax[2*b][2+k].imshow(rgb2gray(predfirst), cmap='gray', vmin=0., vmax=1.)
+      ax[2*b][2+k].imshow((mask[b+B,k], 0.5), alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
+      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
 
     ######### Second Row ###############
     ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
@@ -239,9 +244,10 @@ def visualize(model, im1, im2, spacing=None):
     ax[2*b+1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
 
-    ax[2*b+1][2].imshow(rgb2gray(predsecond), cmap='gray', vmin=0., vmax=1.)
     for k in range(K):
-      ax[2*b+1][2].imshow(mask[b,k], alpha=0.4, vmin=0., vmax=1., cmap=cmaps[k])
+      ax[2*b+1][2+k].imshow(rgb2gray(predsecond), cmap='gray', vmin=0., vmax=1.)
+      ax[2*b+1][2+k].imshow(mask[b,k], alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
+      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b,k,0], displacement[b,k,1]))
     
   fig.tight_layout()
   return fig
