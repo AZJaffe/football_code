@@ -179,7 +179,6 @@ def train(*,
 
   if n_vis_point is not None:
     vis_point = ds_validation[0:n_vis_point]
-    print(vis_point[0].device, vis_point[1].device)
   else:
     vis_point = None
 
