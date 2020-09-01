@@ -201,10 +201,10 @@ def visualize(model, im1, im2, spacing=None):
     loss = dssim_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
     K = mask.shape[1]
 
-  im1 = im1.cpu()
-  im2 = im2.cpu()
+  im1_cpu = im1.cpu()
+  im2_cpu = im2.cpu()
 
-  B,C,H,W = im1.shape
+  B,C,H,W = im1_cpu.shape
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
   if spacing is None:
@@ -212,8 +212,8 @@ def visualize(model, im1, im2, spacing=None):
   i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
   vmask = np.logical_or((i % spacing[0] != 0), (j % spacing[1] != 0))
   for b in range(B):
-    first = im1[b].permute(1,2,0)
-    second = im2[b].permute(1,2,0)
+    first = im1_cpu[b].permute(1,2,0)
+    second = im2_cpu[b].permute(1,2,0)
     predfirst = output[b+B].permute(1,2,0)
     predsecond = output[b].permute(1,2,0)
     if C == 1:
