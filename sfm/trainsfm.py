@@ -179,6 +179,7 @@ def train(*,
 
   if n_vis_point is not None:
     vis_point = ds_validation[0:n_vis_point]
+    print(vis_point[0].device, vis_point[1].device)
   else:
     vis_point = None
 
@@ -187,7 +188,7 @@ def train(*,
     nonlocal best_validation
     best_validation = min(best_validation, metric['validation_recon_loss'])
     if writer is not None:
-      writer.add_scalars('Lossn', {
+      writer.add_scalars('Loss', {
         'Train/Recon': metric['train_recon_loss'],
         'Validation/Recon': metric['validation_recon_loss'],
         'Train/Total': metric['train_total_loss'],
