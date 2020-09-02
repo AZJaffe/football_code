@@ -13,7 +13,7 @@ class SfMNet(torch.nn.Module):
 
   H and W must be divisible by 2**conv_depth
   """
-  def __init__(self, *, H, W, im_channels=3, dropout_likelihood=0.5, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
+  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
     """ fc_layer_spec is the number of fully connected layers BEFORE the output layer """
     super(SfMNet, self).__init__()
     self.factor = conv_depth
@@ -205,12 +205,20 @@ def visualize(model, im1, im2, spacing=None):
   im2_cpu = im2.cpu()
 
   B,C,H,W = im1_cpu.shape
+
+  flow *= torch.tensor([W/2, H/2]) # scale flow so that its units match with the image
+  x_masked_flow = np.ma.masked_where(
+    torch.sum(torch.abs(flow), dim=-1) < 2/3, # mask out all flows whose L1 length is less than 2/3 of a pixel
+    flow[...,0]
+  )
+  y_masked_flow = np.ma.masked_where(
+    torch.sum(torch.abs(flow), dim=-1) < 2/3, # mask out all flows whose L1 length is less than 2/3 of a pixel
+    flow[...,1]
+  )
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
   if spacing is None:
     spacing = [W//20, H//20]
-  i, j = np.meshgrid(np.arange(H), np.arange(W), indexing='ij')
-  vmask = np.logical_or((i % spacing[0] != 0), (j % spacing[1] != 0))
   for b in range(B):
     first = im1_cpu[b].permute(1,2,0)
     second = im2_cpu[b].permute(1,2,0)
@@ -223,34 +231,31 @@ def visualize(model, im1, im2, spacing=None):
       predsecond = predsecond.squeeze(2)
 
     ######### First Row ###############
-    ax[2*b][0].imshow(first, vmin=0., vmax=1.)
+    ax[2*b][0].imshow(first, interpolation='none', vmin=0., vmax=1.)
     ax[2*b][0].set_title('1st Input')
 
-    mx = np.ma.masked_array(flow[b+B,:,:,0], mask=vmask)
-    my = np.ma.masked_array(flow[b+B,:,:,1], mask=vmask)
-    ax[2*b][1].imshow(predfirst, vmin=0., vmax=1.)
-    ax[2*b][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+
+    ax[2*b][1].imshow(predfirst, interpolation='none', vmin=0., vmax=1.)
+    ax[2*b][1].quiver(x_masked_flow[b+B], y_masked_flow[b+B], scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
 
     for k in range(K):
-      ax[2*b][2+k].imshow(rgb2gray(predfirst), cmap='gray', vmin=0., vmax=1.)
-      ax[2*b][2+k].imshow(mask[b+B,k], alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
-      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b+B,k,0], displacement[b+B,k,1]))
+      ax[2*b][2+k].imshow(rgb2gray(predfirst), interpolation='none', cmap='gray', vmin=0., vmax=1.)
+      ax[2*b][2+k].imshow(mask[b+B,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
+      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b+B,k,0], displacement[b+B,k,1], torch.sum(mask[b+B,k])))
 
     ######### Second Row ###############
     ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
     ax[2*b+1][0].set_title('2nd Input')
 
-    mx = np.ma.masked_array(flow[b,:,:,0], mask=vmask)
-    my = np.ma.masked_array(flow[b,:,:,1], mask=vmask)
-    ax[2*b+1][1].imshow(predsecond, vmin=0., vmax=1.)
-    ax[2*b+1][1].quiver(mx * W/2, my * H/2, scale=1, scale_units='xy', angles='xy', color='red') 
+    ax[2*b+1][1].imshow(predsecond, interpolation='none', vmin=0., vmax=1.)
+    ax[2*b+1][1].quiver(x_masked_flow[b], y_masked_flow[b], scale=1, scale_units='xy', angles='xy', color='red') 
     ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
 
     for k in range(K):
-      ax[2*b+1][2+k].imshow(rgb2gray(predsecond), cmap='gray', vmin=0., vmax=1.)
-      ax[2*b+1][2+k].imshow(mask[b,k], alpha=0.8, vmin=0., vmax=1., cmap='Oranges')
-      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)' % (k, displacement[b,k,0], displacement[b,k,1]))
+      ax[2*b+1][2+k].imshow(rgb2gray(predsecond), interpolation='none', cmap='gray', vmin=0., vmax=1.)
+      ax[2*b+1][2+k].imshow(mask[b,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
+      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b,k,0], displacement[b,k,1], torch.sum(mask[b,k])))
     
   fig.tight_layout()
   return fig
