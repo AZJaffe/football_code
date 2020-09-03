@@ -48,6 +48,7 @@ def train_loop(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
+  maskvarreg_coeff=0.,
   num_epochs=1,
   epoch_callback=noop_callback
 ):
@@ -76,8 +77,9 @@ def train_loop(*,
       flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
       maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
       displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
+      mask_var_reg = maskvarreg_coeff * sfmnet.mask_variance_regularization(mask)
 
-      loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
+      loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
 
       optimizer.zero_grad()
       loss.backward()
@@ -143,6 +145,7 @@ def train(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
+  maskvarreg_coeff=0.,
   batch_size=16, 
   num_epochs=1, 
   n_vis_point=None,

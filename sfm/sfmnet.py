@@ -171,7 +171,12 @@ def l1_mask_regularization(mask):
   """
 
   return torch.mean( \
-    torch.sum(torch.abs(mask), dim=(1,))
+    torch.sum(mask, dim=(1,))
+  )
+
+def mask_variance_regularization(mask):
+  return torch.mean( \
+    torch.sum(mask * (1 - mask), dim=(1,))  
   )
 
 def l2_displacement_regularization(displacement):
