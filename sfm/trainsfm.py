@@ -53,9 +53,7 @@ def train_loop(*,
 ):
 
   step = 0
-  start_time = time.monotonic()
   for e in range(0, num_epochs):
-    epoch_start_time = time.monotonic()
     total_loss = 0.
     total_recon_loss = 0.
     for im1, im2 in dl_train:
@@ -100,20 +98,28 @@ def train_loop(*,
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       model.eval()
       total_loss = 0.
+      mask_mass = 0.
+      displ_length = 0.
       for im1,im2 in dl_validation:
         batch_size = im1.shape[0]
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
         loss = sfmnet.dssim_loss(im2, output)
-        total_loss += loss * batch_size
+
+        total_loss    += loss * batch_size
+        mask_mass     += torch.sum(torch.mean(mask, dim=(1,)))
+        displ_length  += torch.sum(torch.mean(torch.abs(displacement), dim=(1,)))
       avg_loss = total_loss / len_validate_ds
+      avg_mask_mass = mask_mass / len_validate_ds
+      avg_displ_length = displ_length / len_validate_ds
       model.train()
-    print(f'epoch: {e} Loss/Validation/Recon: {avg_loss:5f} Loss/Train/Recon: {epoch_recon_loss:.5f} Loss/Train/Total: {epoch_loss:.5f} total_time: {time.monotonic() - start_time:.2f}s epoch_time: {time.monotonic() - epoch_start_time:.2f}s')
 
     epoch_callback(epoch=e, step=step, metric={
-      'train_recon_loss': epoch_recon_loss,
-      'train_total_loss': epoch_loss,
-      'validation_recon_loss': avg_loss
+      'Loss/Train/Recon': epoch_recon_loss,
+      'Loss/Train/Total': epoch_loss,
+      'Loss/Validation/Recon': avg_loss,
+      'Mask_Mass/Validation': avg_mask_mass,
+      'Displ_Length/Validation': avg_displ_length
     })
 
   return model
@@ -183,15 +189,18 @@ def train(*,
     vis_point = None
 
   best_validation = math.inf
+  start_time = time.monotonic()
   def epoch_callback(*, step, epoch, metric):
     nonlocal best_validation
-    best_validation = min(best_validation, metric['validation_recon_loss'])
+    nonlocal start_time
+    best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
+    s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
+    for k,v in metric.items():
+      s += f'{k}: {v:5f} '
+    print(s)
     if writer is not None:
-      writer.add_scalars('Loss', {
-        'Train/Recon': metric['train_recon_loss'],
-        'Validation/Recon': metric['validation_recon_loss'],
-        'Train/Total': metric['train_total_loss'],
-      }, step)
+      for k,v in metric.items():
+        writer.add_scalar(k, v, step)
     if checkpoint_file is not None and epoch % checkpoint_freq == 0:
       save(checkpoint_file, model, optimizer)
     if writer is not None and vis_point is not None and epoch % vis_freq == 0:
