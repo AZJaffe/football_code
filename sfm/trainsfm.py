@@ -7,6 +7,7 @@ import numpy as np
 import time
 import torch
 import math
+import pprint
 from torch.utils.tensorboard import SummaryWriter
 
 import sfmnet
@@ -132,7 +133,8 @@ def train(*,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=10,
-  load_data_to_device=True,
+  load_data_to_device=False,
+  dl_num_workers=6,
   validation_split=0.1,
   disable_cuda=False,
   K=1,
@@ -151,7 +153,8 @@ def train(*,
   n_vis_point=None,
   vis_freq=50,
 ):
-  print(locals())
+  args = locals()
+  pprint.PrettyPrinter(indent=4).pprint(args)
   if disable_cuda is False and torch.cuda.is_available():
     device = torch.device('cuda')
   else:                         
@@ -163,8 +166,8 @@ def train(*,
   n_train = len(ds) - n_validation
   print(f'Validation size {n_validation}, train size {n_train}')
   ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
-  dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True)
-  dl_validation = torch.utils.data.DataLoader(ds_validation, batch_size = 2 * batch_size, shuffle=False)
+  dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, shuffle=True, num_workers=dl_num_workers, pin_memory=True)
+  dl_validation = torch.utils.data.DataLoader(ds_validation, batch_size = 2 * batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
   im_channels, H, W = ds[0][0].shape
 
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
@@ -176,7 +179,6 @@ def train(*,
   
   if checkpoint_file is not None:
     load(checkpoint_file, model, optimizer)
-
 
   if tensorboard_dir is not None:
     sample_input = torch.cat((ds[0][0], ds[0][1]))
@@ -199,7 +201,7 @@ def train(*,
     best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
-      s += f'{k}: {v:5f} '
+      s += f'{k}: {v:7f} '
     print(s)
     if writer is not None:
       for k,v in metric.items():

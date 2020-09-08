@@ -242,7 +242,7 @@ def visualize(model, im1, im2, spacing=None):
 
     ax[2*b][1].imshow(predfirst, interpolation='none', vmin=0., vmax=1.)
     ax[2*b][1].quiver(x_masked_flow[b+B], y_masked_flow[b+B], scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.4f})' , wrap=True)
+    ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.8f})' , wrap=True)
 
     for k in range(K):
       ax[2*b][2+k].imshow(rgb2gray(predfirst), interpolation='none', cmap='gray', vmin=0., vmax=1.)
@@ -255,7 +255,7 @@ def visualize(model, im1, im2, spacing=None):
 
     ax[2*b+1][1].imshow(predsecond, interpolation='none', vmin=0., vmax=1.)
     ax[2*b+1][1].quiver(x_masked_flow[b], y_masked_flow[b], scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.4f})', wrap=True)
+    ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.8f})', wrap=True)
 
     for k in range(K):
       ax[2*b+1][2+k].imshow(rgb2gray(predsecond), interpolation='none', cmap='gray', vmin=0., vmax=1.)

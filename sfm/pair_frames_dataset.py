@@ -36,6 +36,8 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
           im = im.unsqueeze(2)
         images[i] = im.permute(2, 0, 1) / 255
       self.images = images.to(device)
+    else:
+      self.images = None
 
   def load_image(self, i):
     try:
