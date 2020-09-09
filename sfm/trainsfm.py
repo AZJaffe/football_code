@@ -40,6 +40,7 @@ def noop_callback(*a, **k):
   pass
 
 def train_loop(*,
+  device,
   dl_train,
   dl_validation,
   vis_point=None,
@@ -51,7 +52,7 @@ def train_loop(*,
   forwbackwreg_coeff=0.,
   maskvarreg_coeff=0.,
   num_epochs=1,
-  epoch_callback=noop_callback
+  epoch_callback=noop_callback,
 ):
 
   step = 0
@@ -59,6 +60,7 @@ def train_loop(*,
     total_loss = 0.
     total_recon_loss = 0.
     for im1, im2 in dl_train:
+      im1, im2 = im1.to(device), im2.to(device)
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
       backwardbatch = torch.cat((im2, im1), dim=1)
@@ -216,6 +218,7 @@ def train(*,
       writer.add_figure(f'Visualization', fig, step)
 
   train_loop(
+    device=device,
     model=model,
     dl_train=dl_train,
     dl_validation=dl_validation,

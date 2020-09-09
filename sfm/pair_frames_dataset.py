@@ -69,7 +69,7 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
           im_2 = im_2.unsqueeze(2)
         im_1 = im_1.permute(2, 0, 1) / 255
         im_2 = im_2.permute(2, 0, 1) / 255
-        return (im_1.to(self.device), im_2.to(self.device))
+        return (im_1, im_2)
       else:
         return (self.images[i], self.images[i+1])
     else:
