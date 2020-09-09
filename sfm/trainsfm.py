@@ -192,7 +192,7 @@ def train(*,
     writer = None
 
   if n_vis_point is not None:
-    vis_point = ds_validation[0:n_vis_point]
+    vis_point = ds_validation[0:n_vis_point].to(device)
   else:
     vis_point = None
 
