@@ -185,7 +185,7 @@ def train(*,
   if tensorboard_dir is not None:
     sample_input = torch.cat((ds[0][0], ds[0][1]))
     writer = SummaryWriter(log_dir=tensorboard_dir)
-    writer.add_graph(model, sample_input.unsqueeze(0))
+    writer.add_graph(model, sample_input.to(device).unsqueeze(0))
     writer.add_text('model_summary', str(model))
   else:
     writer = None
