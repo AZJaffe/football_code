@@ -107,6 +107,7 @@ def train_loop(*,
       displ_length = 0.
       for im1,im2 in dl_validation:
         batch_size = im1.shape[0]
+        im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
         loss = sfmnet.dssim_loss(im2, output)
