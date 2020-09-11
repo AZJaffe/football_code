@@ -307,16 +307,5 @@ def cleanup_dist():
     dist.destroy_process_group()
 
 if __name__=='__main__':
-  n_gpus = torch.cuda.device_count()
-  if n_gpus <= 1:
-    m = fire.Fire(train)
-  else:
-    def run(rank, world_size):
-      print(f'I am {rank}/{world_size}')
-      setup(rank, world_size)
-      fire.Fire(functools.partial(using_ddp=True, rank=rank))
-    mp.spawn(run,
-        args=(n_gpus,),
-        nprocs=n_gpus,
-        join=True)
+  fire.Fire(train)
   
