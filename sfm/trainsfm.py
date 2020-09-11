@@ -111,7 +111,7 @@ def train_loop(*,
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
-      metrics = torch.zeros((4))
+      metrics = torch.zeros((4), device=device)
       for im1,im2 in dl_validation:
         batch_size = im1.shape[0]
         im1, im2 = im1.to(device), im2.to(device)
