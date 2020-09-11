@@ -22,10 +22,10 @@ def load(checkpoint_file, model, optimizer, rank):
   if checkpoint_file is None:
     return
   try:
-    checkpoint = torch.load(checkpoint_file)
-    map_location = {f'cuda:0': 'cuda:{rank}'}
-    model.load_state_dict(checkpoint['model_state_dict'], map_location=map_location)
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'], map_location=map_location)
+    map_location = {'cuda:0': f'cuda:{rank}' if torch.cuda.is_available() else 'cpu'} 
+    checkpoint = torch.load(checkpoint_file, map_location)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     print(f'Loaded from checkpoint at {checkpoint_file}')
     return
   except FileNotFoundError:
@@ -147,7 +147,6 @@ def train(*,
   tensorboard_dir=None,
   checkpoint_file=None,
   checkpoint_freq=10,
-  load_data_to_device=False,
   dl_num_workers=6,
   validation_split=0.1,
 
@@ -176,7 +175,7 @@ def train(*,
   args = locals()
   pprint.PrettyPrinter(indent=4).pprint(args)
 
-  ds=PairConsecutiveFramesDataset(data_dir, load_all=load_data_to_device, device=device)
+  ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, conv_depth=conv_depth, \
@@ -203,7 +202,7 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  print('training on ' + device)
+  print('training on ' + device.type)
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
@@ -231,7 +230,8 @@ def train(*,
     writer = None
 
   if n_vis_point is not None:
-    vis_point = ds_validation[0:n_vis_point].to(device)
+    vis_point = ds_validation[0:n_vis_point]
+    vis_point = (vis_point[0].to(device), vis_point[1].to(device))
   else:
     vis_point = None
 
