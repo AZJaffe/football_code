@@ -9,10 +9,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 def train():
   args = locals()
   pprint.PrettyPrinter(indent=4).pprint(args)
+  device_id = setup_dist()
   device = torch.device('cuda', device_id)
-
   print('training on ' + device.type + device_id)
-
   cleanup_dist()
 
 
@@ -28,8 +27,9 @@ def setup_dist():
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
       + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
   )
-
+  device_id =  env_dict["LOCAL_RANK"]
   return device_id
+
 
 def cleanup_dist():
     dist.destroy_process_group()
