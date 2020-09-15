@@ -6,32 +6,20 @@ import torch.multiprocessing as mp
 import os
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-def train(*,
-  local_rank=0,
-  local_world_size=1,
-):
+def train():
   args = locals()
   pprint.PrettyPrinter(indent=4).pprint(args)
-  setup_dist(local_rank, local_world_size)
+  device = torch.device('cuda', device_id)
 
-  ngpus = torch.cuda.device_count() // local_world_size
-  device_ids = list(range(local_rank * ngpus, (local_rank + 1) * ngpus))
-  print(
-        f"[{os.getpid()}] rank = {dist.get_rank()}, "
-        + f"world_size = {dist.get_world_size()}, n = {ngpus}, device_ids = {device_ids}"
-  )
-  device = torch.device('cuda', device_ids[0])
-
-  print('training on ' + device.type)
+  print('training on ' + device.type + device_id)
 
   cleanup_dist()
-  # return model
 
 
-def setup_dist(rank, world_size):
+def setup_dist():
   env_dict = {
         key: os.environ[key]
-        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
+        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE", "LOCAL_WORLD_SIZE", "LOCAL_RANK")
   }
   # TODO - remove this
   print(f"[{os.getpid()}] Initializing process group with: {env_dict}")
@@ -40,6 +28,8 @@ def setup_dist(rank, world_size):
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
       + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
   )
+
+  return device_id
 
 def cleanup_dist():
     dist.destroy_process_group()
