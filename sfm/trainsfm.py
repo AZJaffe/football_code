@@ -54,6 +54,7 @@ def train_loop(*,
   vis_point=None,
   model,
   optimizer,
+  forwbackw_data_augmentation=False, # If this is True, the batch size will be twice the size of the batch of dl_train
   flowreg_coeff=0.,
   maskreg_coeff=0.,
   displreg_coeff=0.,
@@ -63,29 +64,42 @@ def train_loop(*,
   epoch_callback=noop_callback,
   using_ddp=False,
 ):
+  if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
+    raise "bad args"
 
   step = 0
+
   for e in range(0, num_epochs):
-    total_loss = 0.
-    total_recon_loss = 0.
+    if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
+      print('setting epoch')
+      dl_train.sampler.set_epoch(e)
+    train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
     for im1, im2 in dl_train:
       im1, im2 = im1.to(device), im2.to(device)
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
-      backwardbatch = torch.cat((im2, im1), dim=1)
-      input = torch.cat((forwardbatch, backwardbatch), dim=0)
+      if forwbackw_data_augmentation:
+        backwardbatch = torch.cat((im2, im1), dim=1)
+        input = torch.cat((forwardbatch, backwardbatch), dim=0)
+        # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
+        target = torch.cat((im2, im1), dim=0)
+      else:
+        input = forwardbatch
+        target = im2
       output, mask, flow, displacement = model(input)
 
-      # The target of the first B outputs is im2 and the target of the second B outputs is im1
-      recon_loss = sfmnet.dssim_loss(torch.cat((im2, im1), dim=0), output)
+      recon_loss = sfmnet.dssim_loss(target, output)
       # backward forward regularization induces a prior on the output of the network
       # that encourages the output from going forward in time is consistent with
       # the output from going backward in time.
       # Precisely, the masks should be the same and the displacements should be the negations of each other 
-      forwbackwreg = forwbackwreg_coeff * (
-        torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
-        + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
-      )
+      if forwbackw_data_augmentation is True:
+        forwbackwreg = forwbackwreg_coeff * (
+          torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
+          + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
+        )
+      else:
+        forwbackwreg = 0.
       flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
       maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
       displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
@@ -97,21 +111,16 @@ def train_loop(*,
       loss.backward()
       optimizer.step()
 
-      # 2 * because the forward model was ran thru with (im1,im2) and (im2, im1), twice the size of the batch
-      total_loss       += loss * 2 * batch_size 
-      total_recon_loss += recon_loss * 2 * batch_size
+      train_metrics[0] += loss * input.shape[0]
+      train_metrics[1] += recon_loss * input.shape[0]
 
       step += 1
     
-    len_train_ds = len(dl_train.dataset)
-    len_validate_ds = len(dl_validation.dataset)
-    epoch_recon_loss = total_recon_loss / (2 * len_train_ds)
-    epoch_loss = total_loss / (2 * len_train_ds)
-    model.eval()
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
+      model.eval()
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
-      metrics = torch.zeros((4), device=device)
+      validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
       for im1,im2 in dl_validation:
         batch_size = im1.shape[0]
         im1, im2 = im1.to(device), im2.to(device)
@@ -119,15 +128,22 @@ def train_loop(*,
         output, mask, flow, displacement = model(input)
         loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
-        metrics[0]   += loss
-        metrics[1]   += torch.sum(torch.mean(mask, dim=(1,)))
-        metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,)))
-        metrics[3]   += 0 # TODO mask_var
-    model.train()
+        validation_metrics[0]   += loss
+        validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,)))
+        validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,)))
+        validation_metrics[3]   += 0 # TODO mask_var
+      model.train()
+
     if using_ddp:
-      dist.reduce(metrics, 0)
+      dist.reduce(validation_metrics, 0)
+      dist.reduce(train_metrics, 0)
     if not using_ddp or dist.get_rank() is 0:
-      avg_loss, avg_mask_mass, avg_displ_length, avg_mask_var = metrics / len_validate_ds
+      len_train_ds = len(dl_train.dataset) * (2 if forwbackwreg_coeff else 1)
+      len_validate_ds = len(dl_validation.dataset)
+
+      epoch_loss, epoch_recon_loss = train_metrics / len_train_ds
+      avg_loss, avg_mask_mass, avg_displ_length, avg_mask_var = validation_metrics / len_validate_ds
+
       epoch_callback(epoch=e, step=step, metric={
         'Loss/Train/Recon': epoch_recon_loss,
         'Loss/Train/Total': epoch_loss,
@@ -183,17 +199,9 @@ def train(*,
   )
 
   if using_ddp:
-    setup_dist(local_rank, local_world_size)
+    device = setup_dist()
     rank = dist.get_rank()
-
-    ngpus = torch.cuda.device_count() // local_world_size
-    device_ids = list(range(local_rank * ngpus, (local_rank + 1) * ngpus))
-    print(
-          f"[{os.getpid()}] rank = {dist.get_rank()}, "
-          + f"world_size = {dist.get_world_size()}, n = {ngpus}, device_ids = {device_ids}"
-    )
-    device = torch.device('cuda', device_ids[0])
-    model = DDP(model.cuda(device), device_ids)
+    model = DDP(model.to(device), device)
   elif torch.cuda.is_available():
     rank = 0
     device = torch.device('cuda', 0)
@@ -290,18 +298,20 @@ def train(*,
   # return model
 
 
-def setup_dist(rank, world_size):
+def setup_dist():
   env_dict = {
         key: os.environ[key]
-        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
+        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE", "LOCAL_RANK")
   }
-  # TODO - remove this
   print(f"[{os.getpid()}] Initializing process group with: {env_dict}")
-  dist.init_process_group(backend="nccl", init_method='env://')
+  dist.init_process_group(backend="nccl" if torch.cuda.is_available() else 'gloo', init_method='env://')
   print(
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
       + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
   )
+  device_id = int(env_dict["LOCAL_RANK"])
+  device = torch.device('cuda', device_id) if torch.cuda.is_available() else torch.device('cpu')
+  return device
 
 def cleanup_dist():
     dist.destroy_process_group()
