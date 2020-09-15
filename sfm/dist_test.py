@@ -12,7 +12,7 @@ def train():
   pprint.PrettyPrinter(indent=4).pprint(args)
   device_id = setup_dist()
   device = torch.device('cuda', device_id)
-  print('training on ' + device.type + device_id)
+  print('training on ' + device.type + ' ' + str(device_id))
   time.sleep(60)
   cleanup_dist()
 
