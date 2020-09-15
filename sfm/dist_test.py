@@ -5,6 +5,7 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import os
 from torch.nn.parallel import DistributedDataParallel as DDP
+import time
 
 def train():
   args = locals()
@@ -12,6 +13,7 @@ def train():
   device_id = setup_dist()
   device = torch.device('cuda', device_id)
   print('training on ' + device.type + device_id)
+  time.sleep(60)
   cleanup_dist()
 
 
@@ -27,7 +29,7 @@ def setup_dist():
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
       + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
   )
-  device_id =  env_dict["LOCAL_RANK"]
+  device_id =  int(env_dict["LOCAL_RANK"])
   return device_id
 
 
