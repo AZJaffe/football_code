@@ -309,6 +309,7 @@ def setup_dist():
   )
   device_id = int(env_dict["LOCAL_RANK"])
   device = torch.device('cuda', device_id) if torch.cuda.is_available() else torch.device('cpu')
+  print('device is ', device)
   return device
 
 def cleanup_dist():
