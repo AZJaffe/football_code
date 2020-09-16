@@ -74,9 +74,8 @@ def train_loop(*,
       print('setting epoch')
       dl_train.sampler.set_epoch(e)
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
-    im1, im2 = iter(dl_train).next()
-    #for im1, im2 in dl_train:
-    while True:
+    model.train()
+    for im1, im2 in dl_train:
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
       print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
@@ -111,15 +110,14 @@ def train_loop(*,
       mask_var_reg = maskvarreg_coeff * sfmnet.mask_variance_regularization(mask)
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
-
       
+      print(f'Before backward {step}:', torch.cuda.memory_summary(device))
       loss.backward()
       print(f'After backward {step}:', torch.cuda.memory_summary(device))
       optimizer.step()
 
       train_metrics[0] += loss.item() * input.shape[0]
       train_metrics[1] += recon_loss.item() * input.shape[0]
-
       step += 1
     
     with torch.no_grad():
@@ -139,7 +137,6 @@ def train_loop(*,
         validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,)))
         validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,)))
         validation_metrics[3]   += 0 # TODO mask_var
-      model.train()
 
     if using_ddp:
       dist.reduce(validation_metrics, 0)
