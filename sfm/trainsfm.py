@@ -63,6 +63,7 @@ def train_loop(*,
   num_epochs=1,
   epoch_callback=noop_callback,
   using_ddp=False,
+  debug=False
 ):
   if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
     raise "bad args"
@@ -78,7 +79,8 @@ def train_loop(*,
     for im1, im2 in dl_train:
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
-      print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
+      if debug:
+        print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
@@ -90,7 +92,8 @@ def train_loop(*,
         input = forwardbatch
         target = im2
       output, mask, flow, displacement = model(input)
-      print(f'After forward {step}:', torch.cuda.memory_summary(device))
+      if debug:
+        print(f'After forward {step}:', torch.cuda.memory_summary(device))
 
       recon_loss = sfmnet.dssim_loss(target, output)
       # backward forward regularization induces a prior on the output of the network
@@ -111,9 +114,11 @@ def train_loop(*,
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       
-      print(f'Before backward {step}:', torch.cuda.memory_summary(device))
+      if debug:
+        print(f'Before backward {step}:', torch.cuda.memory_summary(device))
       loss.backward()
-      print(f'After backward {step}:', torch.cuda.memory_summary(device))
+      if debug:
+        print(f'After backward {step}:', torch.cuda.memory_summary(device))
       optimizer.step()
 
       train_metrics[0] += loss.item() * input.shape[0]
@@ -123,7 +128,8 @@ def train_loop(*,
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
       model.eval()
-      print('Start of validation', torch.cuda.memory_summary(device))
+      if debug:
+        print('Start of validation', torch.cuda.memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
       for im1,im2 in dl_validation:
@@ -189,12 +195,14 @@ def train(*,
   vis_freq=50,
 
   using_ddp=False,
+  debug=False,
 ):
   args = locals()
   pprint.PrettyPrinter(indent=4).pprint(args)
 
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
+  print(f'Inputs has size ({im_channels},{H},{W})')
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
@@ -215,7 +223,8 @@ def train(*,
     device = torch.device('cpu')
 
   print('Training on', device)
-  print('At initialization:', torch.cuda.memory_summary(device))
+  if debug:
+    print('At initialization:', torch.cuda.memory_summary(device))
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
