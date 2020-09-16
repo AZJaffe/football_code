@@ -184,8 +184,6 @@ def train(*,
   n_vis_point=None,
   vis_freq=50,
 
-  local_rank=0,
-  local_world_size=1,
   using_ddp=False,
 ):
   args = locals()
@@ -201,7 +199,7 @@ def train(*,
   if using_ddp:
     device = setup_dist()
     rank = dist.get_rank()
-    model = DDP(model.to(device), device)
+    model = DDP(model.to(device))
   elif torch.cuda.is_available():
     rank = 0
     device = torch.device('cuda', 0)
@@ -210,7 +208,7 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  print('training on ' + device.type)
+  print('training on', device)
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
