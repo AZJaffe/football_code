@@ -77,7 +77,7 @@ class SfMNet(torch.nn.Module):
     }
 
   def total_params(self):
-    sum(p.numel() for p in self.parameters())
+    return sum(p.numel() for p in self.parameters())
 
   def forward(self, input):
     xs = input

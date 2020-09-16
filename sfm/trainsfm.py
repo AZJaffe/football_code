@@ -76,6 +76,7 @@ def train_loop(*,
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
     for im1, im2 in dl_train:
       im1, im2 = im1.to(device), im2.to(device)
+      print('Start of train batch:', torch.cuda.memory_summary(device))
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
@@ -119,6 +120,7 @@ def train_loop(*,
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
       model.eval()
+      print('Start of validation', torch.cuda.memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
       for im1,im2 in dl_validation:
@@ -195,6 +197,8 @@ def train(*,
     C=C, K=K, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
+  print('Initialized the model which has', model.total_params(), 'parameters')
+  print('At initialization:', torch.cuda.memory_summary(device))
 
   if using_ddp:
     setup_dist()
