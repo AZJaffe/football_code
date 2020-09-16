@@ -77,7 +77,6 @@ def train_loop(*,
     im1, im2 = iter(dl_train).next()
     #for im1, im2 in dl_train:
     while True:
-      im1, im2 = dl_train[0]
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
       print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
