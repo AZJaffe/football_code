@@ -75,8 +75,9 @@ def train_loop(*,
       dl_train.sampler.set_epoch(e)
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
     for im1, im2 in dl_train:
+      optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
-      print('Start of train batch:', torch.cuda.memory_summary(device))
+      print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
       batch_size = im1.shape[0]
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
@@ -88,6 +89,7 @@ def train_loop(*,
         input = forwardbatch
         target = im2
       output, mask, flow, displacement = model(input)
+      print(f'After forward {step}:', torch.cuda.memory_summary(device))
 
       recon_loss = sfmnet.dssim_loss(target, output)
       # backward forward regularization induces a prior on the output of the network
@@ -108,12 +110,13 @@ def train_loop(*,
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
 
-      optimizer.zero_grad()
+      
       loss.backward()
+      print(f'After backward {step}:', torch.cuda.memory_summary(device))
       optimizer.step()
 
-      train_metrics[0] += loss * input.shape[0]
-      train_metrics[1] += recon_loss * input.shape[0]
+      train_metrics[0] += loss.item() * input.shape[0]
+      train_metrics[1] += recon_loss.item() * input.shape[0]
 
       step += 1
     
