@@ -74,7 +74,10 @@ def train_loop(*,
       print('setting epoch')
       dl_train.sampler.set_epoch(e)
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
-    for im1, im2 in dl_train:
+    im1, im2 = iter(dl_train).next()
+    #for im1, im2 in dl_train:
+    while True:
+      im1, im2 = dl_train[0]
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
       print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
