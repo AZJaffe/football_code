@@ -198,7 +198,6 @@ def train(*,
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
   print('Initialized the model which has', model.total_params(), 'parameters')
-  print('At initialization:', torch.cuda.memory_summary(device))
 
   if using_ddp:
     setup_dist()
@@ -213,7 +212,8 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  print('training on', device)
+  print('Training on', device)
+  print('At initialization:', torch.cuda.memory_summary(device))
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
