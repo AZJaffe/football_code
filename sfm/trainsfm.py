@@ -199,7 +199,7 @@ def train(*,
   if using_ddp:
     device = setup_dist()
     rank = dist.get_rank()
-    model = DDP(model.to(device))
+    model = DDP(model.to(device), device_ids=[device])
   elif torch.cuda.is_available():
     rank = 0
     device = torch.device('cuda', 0)
