@@ -313,6 +313,7 @@ def train(*,
 
 
 def setup_dist():
+  assert not torch.cuda.is_available or torch.cuda.device_count() == 1
   env_dict = {
         key: os.environ[key]
         for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
