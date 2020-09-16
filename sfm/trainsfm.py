@@ -197,8 +197,9 @@ def train(*,
   )
 
   if using_ddp:
-    device = setup_dist()
+    setup_dist()
     rank = dist.get_rank()
+    device = torch.device('cuda', 0)
     model = DDP(model.to(device), device_ids=[device])
   elif torch.cuda.is_available():
     rank = 0
@@ -299,7 +300,7 @@ def train(*,
 def setup_dist():
   env_dict = {
         key: os.environ[key]
-        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE", "LOCAL_RANK")
+        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
   }
   print(f"[{os.getpid()}] Initializing process group with: {env_dict}")
   dist.init_process_group(backend="nccl" if torch.cuda.is_available() else 'gloo', init_method='env://')
@@ -307,10 +308,6 @@ def setup_dist():
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
       + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
   )
-  device_id = int(env_dict["LOCAL_RANK"])
-  device = torch.device('cuda', device_id) if torch.cuda.is_available() else torch.device('cpu')
-  print('device is ', device, 'total devices is', torch.cuda.device_count())
-  return device
 
 def cleanup_dist():
     dist.destroy_process_group()
