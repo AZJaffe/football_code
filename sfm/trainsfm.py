@@ -244,9 +244,7 @@ def train(*,
     batch_size=2*batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
 
   if tensorboard_dir is not None and rank is 0:
-    sample_input = torch.cat((ds[0][0], ds[0][1])).to(device=device).unsqueeze(0)
     writer = SummaryWriter(log_dir=tensorboard_dir)
-    writer.add_graph(model, sample_input)
     writer.add_text('model_summary', str(model))
   else:
     writer = None
