@@ -13,12 +13,13 @@ class SfMNet(torch.nn.Module):
 
   H and W must be divisible by 2**conv_depth
   """
-  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
+  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32], camera_translation=False):
     """ fc_layer_spec is the number of fully connected layers BEFORE the output layer """
     super(SfMNet, self).__init__()
     self.factor = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.im_channels = im_channels
+    self.camera_translation = camera_translation
     # 2d affine transform
     self.register_buffer('identity_affine_transform', \
       torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
@@ -59,7 +60,7 @@ class SfMNet(torch.nn.Module):
     #     FC Layers     #
     #####################
     embedding_dim = (self.C * H * W) // (2 ** self.factor)
-    fc_layer_widths = [embedding_dim, *hidden_layer_widths, 2*(K+1)]
+    fc_layer_widths = [embedding_dim, *hidden_layer_widths, 2*(K+camera_translation)]
     self.fc_layers = nn.ModuleList([ \
       nn.Linear(fc_layer_widths[i], fc_layer_widths[i+1], bias=False) \
       for i in range(0, len(fc_layer_widths) - 1) \
@@ -106,11 +107,14 @@ class SfMNet(torch.nn.Module):
         embedding = F.relu(fc(embedding))
       else:
         embedding = fc(embedding)
-    displacements = embedding.reshape((batch_size, self.K + 1, 2))
+    displacements = embedding.reshape((batch_size, self.K + self.camera_translation, 2))
 
     # Reshape displacements and masks so they can be broadcast
-    flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-    flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
+    if self.camera_translation:
+      flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+      flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
+    else:
+      flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
     # flow has size (batch_size, H, W, 2)
 
     # identity is not a function of any of the forward parameters

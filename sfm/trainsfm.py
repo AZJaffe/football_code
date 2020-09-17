@@ -176,6 +176,7 @@ def train(*,
   validation_split=0.1,
 
   K=1,
+  camera_translation=False,
   C=16,
   fc_layer_width=128,
   num_hidden_layers=1,
@@ -203,7 +204,7 @@ def train(*,
   im_channels, H, W = ds[0][0].shape
   print(f'Inputs has size ({im_channels},{H},{W})')
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
-    C=C, K=K, conv_depth=conv_depth, \
+    C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
   print('Initialized the model which has', model.total_params(), 'parameters')
