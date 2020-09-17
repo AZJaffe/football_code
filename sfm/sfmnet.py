@@ -58,8 +58,8 @@ class SfMNet(torch.nn.Module):
     #####################
     #     FC Layers     #
     #####################
-    embedding_dim = self.C * H * W // (2 ** self.factor)
-    fc_layer_widths = [embedding_dim, *hidden_layer_widths, 2*K]
+    embedding_dim = (self.C * H * W) // (2 ** self.factor)
+    fc_layer_widths = [embedding_dim, *hidden_layer_widths, 2*(K+1)]
     self.fc_layers = nn.ModuleList([ \
       nn.Linear(fc_layer_widths[i], fc_layer_widths[i+1], bias=False) \
       for i in range(0, len(fc_layer_widths) - 1) \
@@ -106,10 +106,11 @@ class SfMNet(torch.nn.Module):
         embedding = F.relu(fc(embedding))
       else:
         embedding = fc(embedding)
-    displacements = embedding.reshape((batch_size, self.K, 2))
+    displacements = embedding.reshape((batch_size, self.K + 1, 2))
 
     # Reshape displacements and masks so they can be broadcast
-    flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+    flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+    flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
     # flow has size (batch_size, H, W, 2)
 
     # identity is not a function of any of the forward parameters

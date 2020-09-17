@@ -72,7 +72,6 @@ def train_loop(*,
 
   for e in range(0, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
-      print('setting epoch')
       dl_train.sampler.set_epoch(e)
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
     model.train()
