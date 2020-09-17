@@ -157,9 +157,12 @@ def l1_flow_regularization(masks, displacements):
   the constituent flows.
 
   masks         - shape NxCxHxW where C is the number of objects, NOT image channels!
-  displacements - shape NxCx2
+  displacements - shape Nx(C+1)x2 or NxCx2 - The extra dim is for the camera (possibly)
   """
 
+  # If there is camera translation, drop it and don't include it in the regularization
+  if displacements.shape[1] != masks.shape[1]:
+    displacements = displacements[:,1:]
   # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
     torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4),)
@@ -185,12 +188,13 @@ def l2_displacement_regularization(displacement):
 
   displacement - shape NxCx2 where C is the number of objects, NOT image channels!
   """
-
+  # TODO doesn't account for camera translation
   return torch.mean( \
     torch.sum(torch.square(displacement), dim=(1,2,))
   )
 
-def visualize(model, im1, im2, spacing=None):
+def visualize(model, im1, im2):
+  # TODO Figure out what to do with camera translation
   """ im1 and im2 should be size BxCxHxW """
   def rgb2gray(rgb):
     if len(rgb.shape) == 2 or rgb.shape[2] == 1:
@@ -223,8 +227,6 @@ def visualize(model, im1, im2, spacing=None):
   )
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
-  if spacing is None:
-    spacing = [W//20, H//20]
   for b in range(B):
     first = im1_cpu[b].permute(1,2,0)
     second = im2_cpu[b].permute(1,2,0)
