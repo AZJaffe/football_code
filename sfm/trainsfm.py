@@ -59,7 +59,7 @@ def train_loop(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
-  maskvarreg_coeff=0.,
+  maskvarreg_curriculum=None, # Set to N and the maskvar reg will linearly increase from 0 to 1 over N steps
   num_epochs=1,
   epoch_callback=noop_callback,
   using_ddp=False,
@@ -67,6 +67,11 @@ def train_loop(*,
 ):
   if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
     raise "bad args"
+
+  def get_maskvarreg_coeff(step):
+    if maskvarreg_curriculum is None:
+      return 0.
+    return min(1., step/maskvarreg_curriculum)
 
   step = 0
 
@@ -109,7 +114,7 @@ def train_loop(*,
       flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
       maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
       displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
-      mask_var_reg = maskvarreg_coeff * sfmnet.mask_variance_regularization(mask)
+      mask_var_reg = get_maskvarreg_coeff(step) * sfmnet.mask_variance_regularization(mask)
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       
@@ -139,9 +144,9 @@ def train_loop(*,
         loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
         validation_metrics[0]   += loss
-        validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,)))
-        validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,)))
-        validation_metrics[3]   += 0 # TODO mask_var
+        validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
+        validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
+        validation_metrics[3]   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
     if using_ddp:
       dist.reduce(validation_metrics, 0)
@@ -187,7 +192,7 @@ def train(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
-  maskvarreg_coeff=0.,
+  maskvarreg_curriculum=None,
   batch_size=16,
 
   num_epochs=1, 
@@ -287,6 +292,7 @@ def train(*,
     maskreg_coeff=maskreg_coeff,
     displreg_coeff=displreg_coeff,
     forwbackwreg_coeff=forwbackwreg_coeff,
+    maskvarreg_curriculum=maskvarreg_curriculum,
     num_epochs=num_epochs,
     epoch_callback=epoch_callback,
     using_ddp=using_ddp
