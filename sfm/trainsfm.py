@@ -212,12 +212,12 @@ def train(*,
 
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
-  print(f'Inputs has size ({im_channels},{H},{W})')
+  
   model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
-  print('Initialized the model which has', model.total_params(), 'parameters')
+  
 
   if using_ddp:
     setup_dist()
@@ -235,6 +235,8 @@ def train(*,
   if rank == 0:
     pprint.PrettyPrinter(indent=4).pprint(args)
     print('Training on', device)
+    print(f'Inputs has size ({im_channels},{H},{W})')
+    print('Initialized the model which has', model.total_params(), 'parameters')
   if debug:
     print('At initialization:', torch.cuda.memory_summary(device))
 
