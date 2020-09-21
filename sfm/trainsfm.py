@@ -8,6 +8,7 @@ import time
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
+import logger
 from torch.nn.parallel import DistributedDataParallel as DDP
 import math
 import pprint
@@ -209,7 +210,6 @@ def train(*,
 ):
   args = locals()
   
-
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
   
@@ -217,8 +217,8 @@ def train(*,
     C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
+  n_params = model.total_params()
   
-
   if using_ddp:
     setup_dist()
     rank = dist.get_rank()
@@ -232,9 +232,13 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
+  log = logger.new_logger(logger.INFO, rank)
+  log(logger.INFO, 'Initialized the model which has', n_params, 'parameters')
+  if rank == 0:
+    pprint.PrettyPrinter(indent=4).pprint(args)
 
-  if debug:
-    print('At initialization:', torch.cuda.memory_summary(device))
+  log(logger.INFO, 'Training on', device)
+  log(logger.DEBUG, f'Inputs has size ({im_channels},{H},{W})')
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
@@ -242,12 +246,7 @@ def train(*,
 
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
-  if rank == 0:
-    pprint.PrettyPrinter(indent=4).pprint(args)
-    print('Training on', device)
-    print(f'Inputs has size ({im_channels},{H},{W})')
-    print('Initialized the model which has', model.total_params(), 'parameters')
-    print(f'Validation size {n_validation}, train size {n_train}')
+  log(logger.DEBUG, f'Validation size {n_validation}, train size {n_train}')
   ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
 
   sampler_train = torch.utils.data.DistributedSampler(ds_train) if using_ddp else None
