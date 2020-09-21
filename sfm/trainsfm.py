@@ -12,7 +12,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import math
 import pprint
 from torch.utils.tensorboard import SummaryWriter
-import functools
 
 
 import sfmnet
@@ -60,6 +59,7 @@ def train_loop(*,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
   maskvarreg_curriculum=None, # Set to N and the maskvar reg will linearly increase from 0 to 1 over N steps
+  mask_logit_noise_curriculum=None,
   num_epochs=1,
   epoch_callback=noop_callback,
   using_ddp=False,
@@ -68,13 +68,17 @@ def train_loop(*,
   if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
     raise "bad args"
 
-  def get_maskvarreg_coeff(step):
+  def get_maskvarreg_coeff(epoch):
     if maskvarreg_curriculum is None:
       return 0.
-    return min(1., step/maskvarreg_curriculum)
+    return min(1., epoch/maskvarreg_curriculum)
+  
+  def get_mask_logit_noise(epoch):
+    if mask_logit_noise_curriculum is None:
+      return 0.
+    return min(1., epoch/mask_logit_noise_curriculum)
 
   step = 0
-
   for e in range(0, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
@@ -95,7 +99,7 @@ def train_loop(*,
       else:
         input = forwardbatch
         target = im2
-      output, mask, flow, displacement = model(input)
+      output, mask, flow, displacement = model(input, gaussinan_noise_var=get_mask_logit_noise(e))
       if debug:
         print(f'After forward {step}:', torch.cuda.memory_summary(device))
 
@@ -114,7 +118,7 @@ def train_loop(*,
       flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
       maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
       displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
-      mask_var_reg = get_maskvarreg_coeff(step) * sfmnet.mask_variance_regularization(mask)
+      mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       
@@ -193,6 +197,7 @@ def train(*,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
   maskvarreg_curriculum=None,
+  mask_logit_noise_curriculum=None,
   batch_size=16,
 
   num_epochs=1, 
@@ -295,6 +300,7 @@ def train(*,
     displreg_coeff=displreg_coeff,
     forwbackwreg_coeff=forwbackwreg_coeff,
     maskvarreg_curriculum=maskvarreg_curriculum,
+    mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
     epoch_callback=epoch_callback,
     using_ddp=using_ddp
