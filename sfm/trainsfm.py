@@ -232,11 +232,7 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  if rank == 0:
-    pprint.PrettyPrinter(indent=4).pprint(args)
-    print('Training on', device)
-    print(f'Inputs has size ({im_channels},{H},{W})')
-    print('Initialized the model which has', model.total_params(), 'parameters')
+
   if debug:
     print('At initialization:', torch.cuda.memory_summary(device))
 
@@ -246,7 +242,12 @@ def train(*,
 
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
-  print(f'Validation size {n_validation}, train size {n_train}')
+  if rank == 0:
+    pprint.PrettyPrinter(indent=4).pprint(args)
+    print('Training on', device)
+    print(f'Inputs has size ({im_channels},{H},{W})')
+    print('Initialized the model which has', model.total_params(), 'parameters')
+    print(f'Validation size {n_validation}, train size {n_train}')
   ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
 
   sampler_train = torch.utils.data.DistributedSampler(ds_train) if using_ddp else None
