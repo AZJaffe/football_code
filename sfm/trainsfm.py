@@ -203,7 +203,7 @@ def train(*,
   debug=False,
 ):
   args = locals()
-  pprint.PrettyPrinter(indent=4).pprint(args)
+  
 
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
@@ -227,7 +227,9 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  print('Training on', device)
+  if rank == 0:
+    pprint.PrettyPrinter(indent=4).pprint(args)
+    print('Training on', device)
   if debug:
     print('At initialization:', torch.cuda.memory_summary(device))
 
