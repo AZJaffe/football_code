@@ -100,7 +100,7 @@ class SfMNet(torch.nn.Module):
       xs = F.relu(bn(conv(xs)))
 
     logits = self.final_conv(xs)
-    noise = torch.tensor(np.random.normal(scale=mask_logit_noise_var, size=logits.shape), dtype=torch.float32)
+    noise = torch.tensor(np.random.normal(scale=mask_logit_noise_var, size=logits.shape), dtype=torch.float32).to(logits.device)
     masks = torch.sigmoid(logits + noise)
 
     # Compute the displacements starting from the embedding using FC layers
