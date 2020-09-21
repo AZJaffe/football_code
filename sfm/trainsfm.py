@@ -99,7 +99,7 @@ def train_loop(*,
       else:
         input = forwardbatch
         target = im2
-      output, mask, flow, displacement = model(input, gaussinan_noise_var=get_mask_logit_noise(e))
+      output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
       if debug:
         print(f'After forward {step}:', torch.cuda.memory_summary(device))
 

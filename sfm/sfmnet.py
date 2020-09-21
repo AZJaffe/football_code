@@ -80,7 +80,7 @@ class SfMNet(torch.nn.Module):
   def total_params(self):
     return sum(p.numel() for p in self.parameters())
 
-  def forward(self, input, gaussinan_noise_var=0.):
+  def forward(self, input, mask_logit_noise_var=0.):
     xs = input
     batch_size = input.shape[0]
     # Compute the embedding using the encoder convolutional layers
@@ -100,7 +100,7 @@ class SfMNet(torch.nn.Module):
       xs = F.relu(bn(conv(xs)))
 
     logits = self.final_conv(xs)
-    noise = torch.tensor(np.random.normal(scale=gaussinan_noise_var, size=logits.shape), dtype=torch.float32)
+    noise = torch.tensor(np.random.normal(scale=mask_logit_noise_var, size=logits.shape), dtype=torch.float32)
     masks = torch.sigmoid(logits + noise)
 
     # Compute the displacements starting from the embedding using FC layers
