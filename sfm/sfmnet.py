@@ -5,6 +5,65 @@ import matplotlib.pyplot as plt
 import numpy as np
 import kornia
 
+class ConvEncoder(torch.nn.Module):
+  def __init__(self, *, H, W, im_channels, C=16, conv_depth=2):
+    super(ConvEncoder, self).__init__()
+    self.H, self.W, self.C = H,W,C
+    self.im_channels = im_channels
+    self.conv_depth = conv_depth
+
+    conv_encode = nn.ModuleList([nn.Conv2d(im_channels*2, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
+    bns_encode = nn.ModuleList([nn.BatchNorm2d(self.C)])
+    for i in range(self.conv_depth):
+      in_channels = self.C * (2 ** i)
+      out_channels = self.C * (2 ** (i + 1))
+      conv_encode.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False))
+      bns_encode.append(nn.BatchNorm2d(out_channels))
+      conv_encode.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False))
+      bns_encode.append(nn.BatchNorm2d(out_channels))
+    self.conv_encode = conv_encode
+    self.bns_encode = bns_encode
+
+  def forward(self, input):
+    xs = input
+    # Compute the embedding using the encoder convolutional layers
+    encodings = []
+    for i, (conv, bn) in enumerate(zip(self.conv_encode, self.bns_encode)):
+      if i % 2 == 1:
+        encodings.append(xs)
+      xs = F.relu(bn(conv(xs)))
+
+    return xs, encodings
+
+class ConvDecoder(torch.nn.Module):
+  def __init__(self, *, C=16, conv_depth=2, K=1):
+    super(ConvDecoder, self).__init__()
+    self.conv_depth = conv_depth
+    self.C = C
+    conv_decode = nn.ModuleList([]) 
+    bns_decode = nn.ModuleList([])
+    for i in range(self.conv_depth):
+      in_channels = int(self.C * 2 ** (self.conv_depth - i - 1) * 1.5)
+      out_channels = self.C * 2 ** (self.conv_depth - i - 1)
+      conv_decode.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False))
+      bns_decode.append(nn.BatchNorm2d(out_channels))
+
+    self.conv_decode = conv_decode
+    self.bns_decode = bns_decode
+    self.final_conv = nn.Conv2d(self.C, K, kernel_size=3, stride=1, padding=1, bias=False)
+
+  def forward(self, input, encodings, mask_logit_noise_var=0.):
+    xs = input
+    # Compute object masks using convolutional decoder layers
+    for i, (conv, bn) in enumerate(zip(self.conv_decode, self.bns_decode)):
+      xs = F.pixel_shuffle(xs, 2)
+      xs = torch.cat((xs, encodings[-1-i]), dim=1) # Cat on channel dimension
+      xs = F.relu(bn(conv(xs)))
+    logits = self.final_conv(xs)
+    noise = torch.tensor(np.random.normal(scale=mask_logit_noise_var, size=logits.shape), dtype=torch.float32).to(logits.device)
+    masks = torch.sigmoid(logits + noise)
+    return masks
+
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
 
@@ -16,7 +75,7 @@ class SfMNet(torch.nn.Module):
   def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32], camera_translation=False):
     """ fc_layer_spec is the number of fully connected layers BEFORE the output layer """
     super(SfMNet, self).__init__()
-    self.factor = conv_depth
+    self.conv_depth = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.im_channels = im_channels
     self.camera_translation = camera_translation
@@ -24,42 +83,13 @@ class SfMNet(torch.nn.Module):
     self.register_buffer('identity_affine_transform', \
       torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
 
-    ####################
-    #     Encoder      #
-    ####################
-    conv_encode = nn.ModuleList([nn.Conv2d(im_channels*2, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
-    bns_encode = nn.ModuleList([nn.BatchNorm2d(self.C)])
-    # Out channels is at most 2 ** (factor + 5) == 256 for factor == 3
-    for i in range(self.factor):
-      in_channels = self.C * (2 ** i)
-      out_channels = self.C * (2 ** (i + 1))
-      conv_encode.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=2, padding=1, bias=False))
-      bns_encode.append(nn.BatchNorm2d(out_channels))
-      conv_encode.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False))
-      bns_encode.append(nn.BatchNorm2d(out_channels))
-    self.conv_encode = conv_encode
-    self.bns_encode = bns_encode
-
-    ####################
-    #     Decoder      #
-    ####################
-    conv_decode = nn.ModuleList([]) 
-    bns_decode = nn.ModuleList([])
-    for i in range(self.factor):
-      in_channels = int(self.C * 2 ** (self.factor - i - 1) * 1.5)
-      out_channels = self.C * 2 ** (self.factor - i - 1)
-      conv_decode.append(nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False))
-      bns_decode.append(nn.BatchNorm2d(out_channels))
-
-    self.conv_decode = conv_decode
-    self.bns_decode = bns_decode
-    self.final_conv = nn.Conv2d(self.C, K, kernel_size=3, stride=1, padding=1, bias=False)
-
+    self.encoder = ConvEncoder(H=H,W=W,im_channels=im_channels,C=C, conv_depth=conv_depth)
+    self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K)
 
     #####################
     #     FC Layers     #
     #####################
-    embedding_dim = (self.C * H * W) // (2 ** self.factor)
+    embedding_dim = (self.C * H * W) // (2 ** self.conv_depth)
     fc_layer_widths = [embedding_dim, *hidden_layer_widths, 2*(K+camera_translation)]
     self.fc_layers = nn.ModuleList([ \
       nn.Linear(fc_layer_widths[i], fc_layer_widths[i+1], bias=False) \
@@ -81,35 +111,20 @@ class SfMNet(torch.nn.Module):
     return sum(p.numel() for p in self.parameters())
 
   def forward(self, input, mask_logit_noise_var=0.):
-    xs = input
     batch_size = input.shape[0]
-    # Compute the embedding using the encoder convolutional layers
-    encodings = []
-    for i, (conv, bn) in enumerate(zip(self.conv_encode, self.bns_encode)):
-      if i % 2 == 1:
-        encodings.append(xs)
-      xs = F.relu(bn(conv(xs)))
 
-    embedding = torch.flatten(xs, start_dim=1)
-    assert(len(encodings) == self.factor)
+    embedding, encodings = self.encoder(input)
+    masks = self.decoder(embedding, encodings, mask_logit_noise_var)
 
-    # Compute object masks using convolutional decoder layers
-    for i, (conv, bn) in enumerate(zip(self.conv_decode, self.bns_decode)):
-      xs = F.pixel_shuffle(xs, 2)
-      xs = torch.cat((xs, encodings[-1-i]), dim=1) # Cat on channel dimension
-      xs = F.relu(bn(conv(xs)))
-
-    logits = self.final_conv(xs)
-    noise = torch.tensor(np.random.normal(scale=mask_logit_noise_var, size=logits.shape), dtype=torch.float32).to(logits.device)
-    masks = torch.sigmoid(logits + noise)
+    xs = torch.flatten(embedding, start_dim=1)
 
     # Compute the displacements starting from the embedding using FC layers
     for i,fc in enumerate(self.fc_layers):
       if i != len(self.fc_layers) - 1:
-        embedding = F.relu(fc(embedding))
+        xs = F.relu(fc(xs))
       else:
-        embedding = fc(embedding)
-    displacements = embedding.reshape((batch_size, self.K + self.camera_translation, 2))
+        xs = fc(xs)
+    displacements = xs.reshape((batch_size, self.K + self.camera_translation, 2))
 
     # Reshape displacements and masks so they can be broadcast
     if self.camera_translation:
