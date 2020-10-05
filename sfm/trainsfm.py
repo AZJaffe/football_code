@@ -84,8 +84,11 @@ def train_loop(*,
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
     train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
+
+    camera_translation_mse = 0. if 'camera_translation' in dl_train.dataset[0][2] else None
+
     model.train()
-    for im1, im2 in dl_train:
+    for im1, im2, labels in dl_train:
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
       if debug:
@@ -104,6 +107,8 @@ def train_loop(*,
       if debug:
         print(f'After forward {step}:', torch.cuda.memory_summary(device))
 
+      
+        
       recon_loss = sfmnet.dssim_loss(target, output)
       # backward forward regularization induces a prior on the output of the network
       # that encourages the output from going forward in time is consistent with
@@ -132,6 +137,8 @@ def train_loop(*,
 
       train_metrics[0] += loss.item() * input.shape[0]
       train_metrics[1] += recon_loss.item() * input.shape[0]
+      if 'camera_translation' in labels:
+        camera_translation_mse += torch.square(displacement[:,0] - labels['camera_translation'])
       step += 1
     
     with torch.no_grad():
@@ -141,7 +148,8 @@ def train_loop(*,
         print('Start of validation', torch.cuda.memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
-      for im1,im2 in dl_validation:
+      validation_camera_translation_mse = 0. if 'camera_translation' in dl_validation.dataset[0][2] else None
+      for im1, im2, labels in dl_validation:
         batch_size = im1.shape[0]
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
@@ -153,9 +161,15 @@ def train_loop(*,
         validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
         validation_metrics[3]   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
+        if 'camera_translation' in labels:
+          validation_camera_translation_mse += torch.square(displacement[:,0] - labels['camera_translation'])
+
     if using_ddp:
       dist.reduce(validation_metrics, 0)
       dist.reduce(train_metrics, 0)
+      if camera_translation_mse is not None:
+        dist.reduce(camera_translation_mse)
+        dist.reduce(validation_camera_translation_mse)
     if not using_ddp or dist.get_rank() is 0:
       len_train_ds = len(dl_train.dataset) * (2 if forwbackwreg_coeff else 1)
       len_validate_ds = len(dl_validation.dataset)
@@ -163,14 +177,20 @@ def train_loop(*,
       epoch_loss, epoch_recon_loss = train_metrics / len_train_ds
       avg_loss, avg_mask_mass, avg_displ_length, avg_mask_var = validation_metrics / len_validate_ds
 
-      epoch_callback(epoch=e, step=step, metric={
+      metric={
         'Loss/Train/Recon': epoch_recon_loss,
         'Loss/Train/Total': epoch_loss,
         'Loss/Validation/Recon': avg_loss,
         'Metric/MaskMass': avg_mask_mass,
         'Metric/DisplLength': avg_displ_length,
         'Metric/MaskVar': avg_mask_var,
-      })
+      }
+      if camera_translation_mse is not None:
+        metric['Label/Train/CameraTranslationMSE'] = camera_translation_mse / len_train_ds
+      if camera_translation_mse is not None:
+        metric['Label/Validation/CameraTranslationMSE'] = validation_camera_translation_mse / len_validate_ds
+
+      epoch_callback(epoch=e, step=step, metric=metric)
     if using_ddp:
       dist.barrier()
 
@@ -209,6 +229,7 @@ def train(*,
   debug=False,
 ):
   args = locals()
+  assert(camera_translation == True)
   
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape

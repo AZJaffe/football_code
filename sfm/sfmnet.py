@@ -79,13 +79,13 @@ class SfMNet(torch.nn.Module):
     self.conv_depth = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.im_channels = im_channels
-    self.camera_translation = camera_translation
+    self.camera_translation = camera_translation # whether or not to include camera_translation
     # 2d affine transform
     self.register_buffer('identity_affine_transform', \
       torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
 
     self.encoder = ConvEncoder(H=H,W=W,im_channels=im_channels,C=C, conv_depth=conv_depth)
-    self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K)
+    self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K) if K is not 0 else None
 
     #####################
     #     FC Layers     #
@@ -115,7 +115,10 @@ class SfMNet(torch.nn.Module):
     batch_size = input.shape[0]
 
     embedding, encodings = self.encoder(input)
-    masks = self.decoder(embedding, encodings, mask_logit_noise_var)
+    if self.decoder is not None:
+      masks = self.decoder(embedding, encodings, mask_logit_noise_var)
+    else:
+      masks = torch.ones((0, self.H, self.W))
 
     xs = torch.flatten(embedding, start_dim=1)
 
@@ -129,7 +132,10 @@ class SfMNet(torch.nn.Module):
 
     # Reshape displacements and masks so they can be broadcast
     if self.camera_translation:
-      flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+      if self.K > 0:
+        flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+      else:
+        flow = torch.zeros((batch_size,self.H,self.W,2))
       flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
     else:
       flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
@@ -142,7 +148,6 @@ class SfMNet(torch.nn.Module):
       (batch_size, self.im_channels, self.H, self.W), \
       align_corners=False
     )
-  
     grid = identity + flow
     out = F.grid_sample(input[:,0:self.im_channels], grid, align_corners=False, padding_mode="border")
     
