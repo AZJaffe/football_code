@@ -18,6 +18,8 @@ from torch.utils.tensorboard import SummaryWriter
 import sfmnet
 from pair_frames_dataset import PairConsecutiveFramesDataset
 
+log = logger.noop
+
 def load(checkpoint_file, model, optimizer, rank):
   if checkpoint_file is None:
     return
@@ -26,7 +28,7 @@ def load(checkpoint_file, model, optimizer, rank):
     checkpoint = torch.load(checkpoint_file, map_location)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    print(f'Loaded from checkpoint at {checkpoint_file}')
+    print(f'RANK {rank}: Loaded from checkpoint at {checkpoint_file}')
     return
   except FileNotFoundError:
     return
@@ -42,7 +44,7 @@ def save(checkpoint_file, model, optimizer, rank):
       'optimizer_state_dict': optimizer.state_dict(),
     }, tmp_file)
   os.replace(tmp_file, checkpoint_file)
-  print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}: Checkpoint saved at {checkpoint_file}')
+  log.INFO(f'Checkpoint saved at {checkpoint_file}')
 
 def noop_callback(*a, **k):
   pass
@@ -64,7 +66,7 @@ def train_loop(*,
   num_epochs=1,
   epoch_callback=noop_callback,
   using_ddp=False,
-  debug=False
+  debug=False,
 ):
   if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
     raise "bad args"
@@ -91,8 +93,7 @@ def train_loop(*,
     for im1, im2, labels in dl_train:
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
-      if debug:
-        print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
       batch_size, C, H, W = im1.shape
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
@@ -104,8 +105,7 @@ def train_loop(*,
         input = forwardbatch
         target = im2
       output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
-      if debug:
-        print(f'After forward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'After forward {step}:', torch.cuda.memory_summary(device))
 
       
         
@@ -128,11 +128,9 @@ def train_loop(*,
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       
-      if debug:
-        print(f'Before backward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'Before backward {step}:', torch.cuda.memory_summary(device))
       loss.backward()
-      if debug:
-        print(f'After backward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'After backward {step}:', torch.cuda.memory_summary(device))
       optimizer.step()
 
       train_metrics[0] += loss.item() * input.shape[0]
@@ -145,8 +143,7 @@ def train_loop(*,
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
       model.eval()
-      if debug:
-        print('Start of validation', torch.cuda.memory_summary(device))
+      log.DEBUG('Start of validation', torch.cuda.memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
       validation_camera_translation_mse = 0. if 'camera_translation' in dl_validation.dataset[0][2] else None
@@ -255,13 +252,14 @@ def train(*,
     rank = 0
     device = torch.device('cpu')
 
-  log = logger.new_logger(logger.INFO, rank)
-  log(logger.INFO, 'Initialized the model which has', n_params, 'parameters')
+  global log
+  log = logger(logger.LEVEL_INFO, rank)
+  log.INFO('Initialized the model which has', n_params, 'parameters')
   if rank == 0:
     pprint.PrettyPrinter(indent=4).pprint(args)
 
-  log(logger.INFO, 'Training on', device)
-  log(logger.DEBUG, f'Inputs has size ({im_channels},{H},{W})')
+  log.INFO('Training on', device)
+  log.DEBUG(f'Inputs has size ({im_channels},{H},{W})')
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
   if checkpoint_file is not None:
@@ -328,7 +326,7 @@ def train(*,
     mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
     epoch_callback=epoch_callback,
-    using_ddp=using_ddp
+    using_ddp=using_ddp,
   )
 
   if writer is not None:

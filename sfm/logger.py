@@ -1,15 +1,35 @@
 # Really simple logger
 
-import datetime
+from datetime import datetime
+from functools import partial
 
-DEBUG = 0
-INFO = 1
-WARNING = 2
-def new_logger(min_level, rank):
-  def log(level, *s):
-    if rank != 0:
+
+LEVEL_DEBUG = 0
+LEVEL_INFO = 1
+LEVEL_WARNING = 2
+
+
+class logger():
+  def __init__(self, min_level, rank):
+    self.min_level = min_level
+    self.rank = rank
+    
+  def DEBUG(self, *s):
+    partial(self._log, LEVEL_DEBUG)
+  def INFO(self, *s):
+    partial(self._log, LEVEL_INFO)
+  def WARNING(self, *s):
+    partial(self._log, LEVEL_WARNING)
+
+  def _log(self, level, *s):
+    if self.rank != 0:
       return
-    if level < min_level:
+    if level < self.min_level:
       return
-    print(f'[{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]:', *s)
-  return log
+    print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]:', *s)
+
+
+__LEVEL_NOOP = 1000
+class noop(logger):
+  def __init__(self):
+    super().__init__(__LEVEL_NOOP, 1)
