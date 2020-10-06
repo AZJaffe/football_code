@@ -118,7 +118,7 @@ class SfMNet(torch.nn.Module):
     if self.decoder is not None:
       masks = self.decoder(embedding, encodings, mask_logit_noise_var)
     else:
-      masks = torch.ones((0, self.H, self.W))
+      masks = torch.ones((0, self.H, self.W), device=input.device)
 
     xs = torch.flatten(embedding, start_dim=1)
 
