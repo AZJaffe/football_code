@@ -300,9 +300,8 @@ def train(*,
     best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
-      print(v)
       s += f'{k}: {v:7f} '
-    log(s)
+    log(logger.INFO, s)
     if writer is not None:
       for k,v in metric.items():
         writer.add_scalar(k, v, step)
