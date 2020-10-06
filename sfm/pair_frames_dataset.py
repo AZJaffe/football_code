@@ -14,7 +14,6 @@ class PairConsecutiveFramesDataset(torch.utils.data.Dataset):
     """
     image_filenames = glob.glob(os.path.join(root_dir ,'image*.png')) 
     self.num_images = len(image_filenames)
-    assert(self.num_images > 0, f'No images found in the directory {root_dir}')
     self.digits = len(os.path.basename(image_filenames[0])) - 9 # len('image.png') = 9
     self.root_dir = root_dir
     try:
