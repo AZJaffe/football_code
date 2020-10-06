@@ -173,7 +173,7 @@ def train_loop(*,
         dist.reduce(camera_translation_mse)
         dist.reduce(validation_camera_translation_mse)
     if not using_ddp or dist.get_rank() is 0:
-      len_train_ds = len(dl_train.dataset) * (2 if forwbackwreg_coeff else 1)
+      len_train_ds = len(dl_train.dataset) * (2 if forwbackwreg_coeff != 0. else 1)
       len_validate_ds = len(dl_validation.dataset)
 
       epoch_loss, epoch_recon_loss = train_metrics / len_train_ds
@@ -300,6 +300,7 @@ def train(*,
     best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
+      print(v)
       s += f'{k}: {v:7f} '
     log(s)
     if writer is not None:
