@@ -138,7 +138,8 @@ def train_loop(*,
       train_metrics[0] += loss.item() * input.shape[0]
       train_metrics[1] += recon_loss.item() * input.shape[0]
       if 'camera_translation' in labels:
-        camera_translation_mse += torch.square(displacement[:,0] - labels['camera_translation'])
+        ct = labels['camera_translation'].to(device)
+        camera_translation_mse += torch.square(displacement[:,0] - ct)
       step += 1
     
     with torch.no_grad():
@@ -162,7 +163,8 @@ def train_loop(*,
         validation_metrics[3]   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
         if 'camera_translation' in labels:
-          validation_camera_translation_mse += torch.square(displacement[:,0] - labels['camera_translation'])
+          ct = labels['camera_translation'].to(device)
+          validation_camera_translation_mse += torch.square(displacement[:,0] - ct)
 
     if using_ddp:
       dist.reduce(validation_metrics, 0)
