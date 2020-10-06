@@ -129,17 +129,18 @@ def train_loop(*,
       mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
-      
+      if 'camera_translation' in labels:
+        ct = labels['camera_translation'].to(device)
+        camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
+        camera_translation_mse.backward()  
       log.DEBUG(f'Before backward {step}:', memory_summary(device))
-      loss.backward()
+      #loss.backward()
       log.DEBUG(f'After backward {step}:', memory_summary(device))
       optimizer.step()
 
       train_metrics[0] += loss.item() * input.shape[0]
       train_metrics[1] += recon_loss.item() * input.shape[0]
-      if 'camera_translation' in labels:
-        ct = labels['camera_translation'].to(device)
-        camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
+      
       step += 1
     
     with torch.no_grad():
