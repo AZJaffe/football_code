@@ -1,8 +1,6 @@
 # Really simple logger
 
 from datetime import datetime
-from functools import partial
-
 
 LEVEL_DEBUG = 0
 LEVEL_INFO = 1
@@ -15,11 +13,11 @@ class logger():
     self.rank = rank
     
   def DEBUG(self, *s):
-    partial(self._log, LEVEL_DEBUG)
+    self._log(LEVEL_DEBUG, *s)
   def INFO(self, *s):
-    partial(self._log, LEVEL_INFO)
+    self._log(LEVEL_INFO, *s)
   def WARNING(self, *s):
-    partial(self._log, LEVEL_WARNING)
+    self._log(LEVEL_WARNING, *s)
 
   def _log(self, level, *s):
     if self.rank != 0:

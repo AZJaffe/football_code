@@ -46,6 +46,9 @@ def save(checkpoint_file, model, optimizer, rank):
   os.replace(tmp_file, checkpoint_file)
   log.INFO(f'Checkpoint saved at {checkpoint_file}')
 
+def memory_summary(device):
+  return torch.cuda.memory_summary(device) if torch.cuda.is_available() else 'NO CUDA DEVICE'
+
 def noop_callback(*a, **k):
   pass
 
@@ -93,7 +96,7 @@ def train_loop(*,
     for im1, im2, labels in dl_train:
       optimizer.zero_grad()
       im1, im2 = im1.to(device), im2.to(device)
-      log.DEBUG(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
       batch_size, C, H, W = im1.shape
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
@@ -105,9 +108,8 @@ def train_loop(*,
         input = forwardbatch
         target = im2
       output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
-      log.DEBUG(f'After forward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'After forward {step}:', memory_summary(device))
 
-      
         
       recon_loss = sfmnet.dssim_loss(target, output)
       # backward forward regularization induces a prior on the output of the network
@@ -128,22 +130,22 @@ def train_loop(*,
 
       loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       
-      log.DEBUG(f'Before backward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'Before backward {step}:', memory_summary(device))
       loss.backward()
-      log.DEBUG(f'After backward {step}:', torch.cuda.memory_summary(device))
+      log.DEBUG(f'After backward {step}:', memory_summary(device))
       optimizer.step()
 
       train_metrics[0] += loss.item() * input.shape[0]
       train_metrics[1] += recon_loss.item() * input.shape[0]
       if 'camera_translation' in labels:
         ct = labels['camera_translation'].to(device)
-        camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=displacement.device) - ct))
+        camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
       step += 1
     
     with torch.no_grad():
       # Just evaluate the reconstruction loss for the validation set
       model.eval()
-      log.DEBUG('Start of validation', torch.cuda.memory_summary(device))
+      log.DEBUG('Start of validation', memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
       validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
       validation_camera_translation_mse = 0. if 'camera_translation' in dl_validation.dataset[0][2] else None
@@ -161,7 +163,7 @@ def train_loop(*,
 
         if 'camera_translation' in labels:
           batch_size, C, H, W = im1.shape
-          validation_camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=displacement.device) - ct))
+          validation_camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
 
     if using_ddp:
       dist.reduce(validation_metrics, 0)
@@ -253,7 +255,7 @@ def train(*,
     device = torch.device('cpu')
 
   global log
-  log = logger(logger.LEVEL_INFO, rank)
+  log = logger.logger(logger.LEVEL_INFO, rank)
   log.INFO('Initialized the model which has', n_params, 'parameters')
   if rank == 0:
     pprint.PrettyPrinter(indent=4).pprint(args)
@@ -267,7 +269,7 @@ def train(*,
 
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
-  log(logger.DEBUG, f'Validation size {n_validation}, train size {n_train}')
+  log.DEBUG(f'Validation size {n_validation}, train size {n_train}')
   ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
 
   sampler_train = torch.utils.data.DistributedSampler(ds_train) if using_ddp else None
@@ -299,7 +301,7 @@ def train(*,
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
       s += f'{k}: {v:7f} '
-    log(logger.INFO, s)
+    log.INFO(s)
     if writer is not None:
       for k,v in metric.items():
         writer.add_scalar(k, v, step)

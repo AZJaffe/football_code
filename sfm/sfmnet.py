@@ -118,7 +118,7 @@ class SfMNet(torch.nn.Module):
     if self.decoder is not None:
       masks = self.decoder(embedding, encodings, mask_logit_noise_var)
     else:
-      masks = torch.ones((0, self.H, self.W), device=input.device)
+      masks = torch.ones((batch_size, 0, self.H, self.W), device=input.device)
 
     xs = torch.flatten(embedding, start_dim=1)
 
@@ -188,6 +188,8 @@ def l1_flow_regularization(masks, displacements):
   """
 
   # If there is camera translation, drop it and don't include it in the regularization
+  if masks.shape[1] == 0:
+    return 0
   if displacements.shape[1] != masks.shape[1]:
     displacements = displacements[:,1:]
   # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
@@ -200,12 +202,18 @@ def l1_mask_regularization(mask):
 
   mask - shape NxCxHxW where C is the number of objects, NOT image channels!
   """
+  print(mask.shape)
+  if mask.shape[1] == 0:
+    return 0
 
   return torch.mean( \
     torch.sum(mask, dim=(1,))
   )
 
 def mask_variance_regularization(mask):
+  if mask.shape[1] == 0:
+    return 0
+
   return torch.mean( \
     torch.sum(mask * (1 - mask), dim=(1,))  
   )
