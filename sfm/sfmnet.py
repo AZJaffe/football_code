@@ -135,7 +135,7 @@ class SfMNet(torch.nn.Module):
       if self.K > 0:
         flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
       else:
-        flow = torch.zeros((batch_size,self.H,self.W,2))
+        flow = torch.zeros((batch_size,self.H,self.W,2), device=displacements.device)
       flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
     else:
       flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
