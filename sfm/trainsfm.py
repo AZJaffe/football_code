@@ -278,7 +278,7 @@ def train(*,
     shuffle=(sampler_train is None), sampler=sampler_train, num_workers=dl_num_workers, pin_memory=True)
 
   dl_validation = torch.utils.data.DataLoader(ds_validation, sampler=sampler_validation, 
-    batch_size=2*batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
+    batch_size=batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
 
   if tensorboard_dir is not None and rank is 0:
     writer = SummaryWriter(log_dir=tensorboard_dir)
