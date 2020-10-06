@@ -189,7 +189,7 @@ def train_loop(*,
       }
       if camera_translation_mse is not None:
         metric['Label/Train/CameraTranslationMSE'] = camera_translation_mse / len_train_ds
-      if camera_translation_mse is not None:
+      if validation_camera_translation_mse is not None:
         metric['Label/Validation/CameraTranslationMSE'] = validation_camera_translation_mse / len_validate_ds
 
       epoch_callback(epoch=e, step=step, metric=metric)
