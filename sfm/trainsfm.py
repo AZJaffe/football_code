@@ -93,7 +93,7 @@ def train_loop(*,
       im1, im2 = im1.to(device), im2.to(device)
       if debug:
         print(f'Start of train batch {step}:', torch.cuda.memory_summary(device))
-      batch_size = im1.shape[0]
+      batch_size, C, H, W = im1.shape
       forwardbatch = torch.cat((im1, im2), dim=1)
       if forwbackw_data_augmentation:
         backwardbatch = torch.cat((im2, im1), dim=1)
@@ -139,7 +139,7 @@ def train_loop(*,
       train_metrics[1] += recon_loss.item() * input.shape[0]
       if 'camera_translation' in labels:
         ct = labels['camera_translation'].to(device)
-        camera_translation_mse += torch.sum(torch.square(displacement[:,0] - ct))
+        camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=displacement.device) - ct))
       step += 1
     
     with torch.no_grad():
@@ -163,8 +163,8 @@ def train_loop(*,
         validation_metrics[3]   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
         if 'camera_translation' in labels:
-          ct = labels['camera_translation'].to(device)
-          validation_camera_translation_mse += torch.sum(torch.square(displacement[:,0] - ct))
+          batch_size, C, H, W = im1.shape
+          validation_camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=displacement.device) - ct))
 
     if using_ddp:
       dist.reduce(validation_metrics, 0)
