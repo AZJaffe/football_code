@@ -299,7 +299,7 @@ def train(*,
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
       s += f'{k}: {v:7f} '
-    print(s)
+    log(s)
     if writer is not None:
       for k,v in metric.items():
         writer.add_scalar(k, v, step)
