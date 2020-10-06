@@ -202,7 +202,6 @@ def l1_mask_regularization(mask):
 
   mask - shape NxCxHxW where C is the number of objects, NOT image channels!
   """
-  print(mask.shape)
   if mask.shape[1] == 0:
     return 0
 
