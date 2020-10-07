@@ -128,7 +128,7 @@ def train_loop(*,
       displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
       mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
 
-      loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
+      #loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
       if 'camera_translation' in labels:
         ct = labels['camera_translation'].to(device)
         camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
@@ -138,8 +138,8 @@ def train_loop(*,
       log.DEBUG(f'After backward {step}:', memory_summary(device))
       optimizer.step()
 
-      train_metrics[0] += loss.item() * input.shape[0]
-      train_metrics[1] += recon_loss.item() * input.shape[0]
+      # train_metrics[0] += loss.item() * input.shape[0]
+      # train_metrics[1] += recon_loss.item() * input.shape[0]
       
       step += 1
     
@@ -155,7 +155,7 @@ def train_loop(*,
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
-        loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
+        # loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
         validation_metrics[0]   += loss
         validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
