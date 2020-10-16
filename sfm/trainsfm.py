@@ -152,7 +152,7 @@ def train_loop(*,
         metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
         if 'camera_translation' in labels:
-          ct = labels['camera_translation']
+          ct = labels['camera_translation'].to(device)
           batch_size, C, H, W = im1.shape
           metrics['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
     model.train()
