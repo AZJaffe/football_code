@@ -21,21 +21,28 @@ from pair_frames_dataset import PairConsecutiveFramesDataset
 
 log = logger.noop
 
-def load(checkpoint_file, model, optimizer, rank):
+def get_rank():
+  return get_rank() if dist.is_initialized() else 0
+
+def load(checkpoint_file, model, optimizer):
+  # Returns the epoch number to start at, as well as loads the optimizer and model
   if checkpoint_file is None:
     return
   try:
-    map_location = {'cuda:0': f'cuda:{rank}' if torch.cuda.is_available() else 'cpu'} 
+    map_location = {'cuda:0': f'cuda:{get_rank()}' if torch.cuda.is_available() else 'cpu'} 
     checkpoint = torch.load(checkpoint_file, map_location)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    print(f'RANK {rank}: Loaded from checkpoint at {checkpoint_file}')
-    return
+    log.INFO(f'RANK {get_rank()}: Loaded from checkpoint at {checkpoint_file}')
+    if 'epoch' in checkpoint:
+      return checkpoint['epoch']
+    else:
+      return 0  
   except FileNotFoundError:
-    return
+    return 0
 
-def save(checkpoint_file, model, optimizer, rank):
-  if rank != 0:
+def save(checkpoint_file, model, optimizer, epoch):
+  if get_rank() is not 0:
     return
   if checkpoint_file is None:
     return
@@ -43,6 +50,7 @@ def save(checkpoint_file, model, optimizer, rank):
   torch.save({
       'model_state_dict': model.state_dict(),
       'optimizer_state_dict': optimizer.state_dict(),
+      'epoch': epoch
     }, tmp_file)
   os.replace(tmp_file, checkpoint_file)
   log.INFO(f'Checkpoint saved at {checkpoint_file}')
@@ -68,6 +76,7 @@ def train_loop(*,
   maskvarreg_curriculum=None, # Set to N and the maskvar reg will linearly increase from 0 to 1 over N steps
   mask_logit_noise_curriculum=None,
   num_epochs=1,
+  start_at_epoch=0,
   log_metrics=noop_callback,
   using_ddp=False,
   checkpoint_file=None,
@@ -171,7 +180,7 @@ def train_loop(*,
     return broadcasted
 
   step = 0
-  for e in range(0, num_epochs):
+  for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
     metrics = defaultdict(int)
@@ -188,11 +197,11 @@ def train_loop(*,
       log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
       log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
 
-  if checkpoint_file is not None and epoch % checkpoint_freq == 0:
-    save(checkpoint_file, model, optimizer, rank)
+    if checkpoint_file is not None and e % checkpoint_freq == 0:
+      save(checkpoint_file, model, optimizer, e)
 
-  if using_ddp:
-    dist.barrier()
+    if using_ddp:
+      dist.barrier()
 
   return model
 
@@ -242,29 +251,28 @@ def train(*,
   
   if using_ddp:
     setup_dist()
-    rank = dist.get_rank()
     device = torch.device('cuda', 0)
     model = DDP(model.to(device), device_ids=[device])
   elif torch.cuda.is_available():
-    rank = 0
     device = torch.device('cuda', 0)
     model = model.to(device)
   else:
-    rank = 0
     device = torch.device('cpu')
 
   global log
+  rank = get_rank()
   log = logger.logger(logger.LEVEL_INFO, rank)
   log.INFO('Initialized the model which has', n_params, 'parameters')
-  if rank == 0:
+  if rank is 0:
     pprint.PrettyPrinter(indent=4).pprint(args)
 
   log.INFO('Training on', device)
   log.DEBUG(f'Inputs has size ({im_channels},{H},{W})')
 
   optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  start_at_epoch = 0
   if checkpoint_file is not None:
-    load(checkpoint_file, model, optimizer, rank)
+    start_at_epoch = load(checkpoint_file, model, optimizer)
 
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
@@ -327,6 +335,7 @@ def train(*,
     maskvarreg_curriculum=maskvarreg_curriculum,
     mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
+    start_at_epoch=start_at_epoch,
     log_metrics=log_metrics,
     using_ddp=using_ddp,
     checkpoint_file=checkpoint_file,
@@ -345,7 +354,7 @@ def train(*,
     })
 
   if checkpoint_file is not None:
-    save(checkpoint_file, model, optimizer, rank)
+    save(checkpoint_file, model, optimizer, num_epochs)
   if using_ddp:
     cleanup_dist()
   # return model
@@ -361,7 +370,7 @@ def setup_dist():
   dist.init_process_group(backend="nccl" if torch.cuda.is_available() else 'gloo', init_method='env://')
   print(
       f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
-      + f"rank = {dist.get_rank()}, backend={dist.get_backend()}"
+      + f"rank = {get_rank()}, backend={dist.get_backend()}"
   )
 
 def cleanup_dist():
