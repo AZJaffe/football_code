@@ -1,5 +1,6 @@
 import argparse
 import datetime
+from collections import defaultdict
 import fire
 import os
 import matplotlib.pyplot as plt
@@ -67,12 +68,11 @@ def train_loop(*,
   maskvarreg_curriculum=None, # Set to N and the maskvar reg will linearly increase from 0 to 1 over N steps
   mask_logit_noise_curriculum=None,
   num_epochs=1,
-  epoch_callback=noop_callback,
+  log_metrics=noop_callback,
   using_ddp=False,
-  debug=False,
+  checkpoint_file=None,
+  checkpoint_freq=None,
 ):
-  if forwbackw_data_augmentation is False and forwbackwreg_coeff > 0.:
-    raise "bad args"
 
   def get_maskvarreg_coeff(epoch):
     if maskvarreg_curriculum is None:
@@ -84,73 +84,61 @@ def train_loop(*,
       return 0.
     return min(1., epoch/mask_logit_noise_curriculum)
 
-  step = 0
-  for e in range(0, num_epochs):
-    if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
-      dl_train.sampler.set_epoch(e)
-    train_metrics = torch.zeros((2), dtype=torch.float32, device=device)
+  def run_step(im1, im2, labels, metrics):
+    optimizer.zero_grad()
+    im1, im2 = im1.to(device), im2.to(device)
+    log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
+    batch_size, C, H, W = im1.shape
+    forwardbatch = torch.cat((im1, im2), dim=1)
+    if forwbackw_data_augmentation:
+      backwardbatch = torch.cat((im2, im1), dim=1)
+      input = torch.cat((forwardbatch, backwardbatch), dim=0)
+      # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
+      target = torch.cat((im2, im1), dim=0)
+    else:
+      input = forwardbatch
+      target = im2
+    output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
+    log.DEBUG(f'After forward {step}:', memory_summary(device))
 
-    camera_translation_mse = 0. if 'camera_translation' in dl_train.dataset[0][2] else None
-
-    model.train()
-    for im1, im2, labels in dl_train:
-      optimizer.zero_grad()
-      im1, im2 = im1.to(device), im2.to(device)
-      log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
-      batch_size, C, H, W = im1.shape
-      forwardbatch = torch.cat((im1, im2), dim=1)
-      if forwbackw_data_augmentation:
-        backwardbatch = torch.cat((im2, im1), dim=1)
-        input = torch.cat((forwardbatch, backwardbatch), dim=0)
-        # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
-        target = torch.cat((im2, im1), dim=0)
-      else:
-        input = forwardbatch
-        target = im2
-      output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
-      log.DEBUG(f'After forward {step}:', memory_summary(device))
-
-        
-      recon_loss = sfmnet.dssim_loss(target, output)
-      # backward forward regularization induces a prior on the output of the network
-      # that encourages the output from going forward in time is consistent with
-      # the output from going backward in time.
-      # Precisely, the masks should be the same and the displacements should be the negations of each other 
-      if forwbackw_data_augmentation is True:
-        forwbackwreg = forwbackwreg_coeff * (
-          torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
-          + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
-        )
-      else:
-        forwbackwreg = 0.
-      flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
-      maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
-      displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
-      mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
-
-      loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
-      if 'camera_translation' in labels:
-        ct = labels['camera_translation'].to(device)
-        mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
-        mse.backward()
-        camera_translation_mse += mse
-      log.DEBUG(f'Before backward {step}:', memory_summary(device))
-      #loss.backward()
-      log.DEBUG(f'After backward {step}:', memory_summary(device))
-      optimizer.step()
-
-      train_metrics[0] += loss.item() * input.shape[0]
-      train_metrics[1] += recon_loss.item() * input.shape[0]
       
-      step += 1
-    
+    recon_loss = sfmnet.dssim_loss(target, output)
+    # backward forward regularization induces a prior on the output of the network
+    # that encourages the output from going forward in time is consistent with
+    # the output from going backward in time.
+    # Precisely, the masks should be the same and the displacements should be the negations of each other 
+    if forwbackw_data_augmentation is True:
+      forwbackwreg = forwbackwreg_coeff * (
+        torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
+        + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
+      )
+    else:
+      forwbackwreg = 0.
+    flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
+    maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
+    displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
+    mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
+
+    loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
+    if 'camera_translation' in labels:
+      ct = labels['camera_translation'].to(device)
+      mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
+      mse.backward()
+      metrics['Label/CameraDisplMSE'] += mse.item() * input.shape[0]
+    log.DEBUG(f'Before backward {step}:', memory_summary(device))
+    #loss.backward()
+    log.DEBUG(f'After backward {step}:', memory_summary(device))
+    optimizer.step()
+
+    metrics['Loss'] += loss.item() * input.shape[0]
+    metrics['ReconLoss'] += recon_loss.item() * input.shape[0]
+
+  def run_validation(model, dl):
+    model.eval()
     with torch.no_grad():
-      # Just evaluate the reconstruction loss for the validation set
-      model.eval()
       log.DEBUG('Start of validation', memory_summary(device))
       assert(len(dl_validation.dataset) > 0) # TODO allow no validation
-      validation_metrics = torch.zeros((4), device=device, dtype=torch.float32)
-      validation_camera_translation_mse = 0. if 'camera_translation' in dl_validation.dataset[0][2] else None
+      metrics = defaultdict(int)
       for im1, im2, labels in dl_validation:
         batch_size = im1.shape[0]
         im1, im2 = im1.to(device), im2.to(device)
@@ -158,44 +146,53 @@ def train_loop(*,
         output, mask, flow, displacement = model(input)
         loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
-        validation_metrics[0]   += loss
-        validation_metrics[1]   += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-        validation_metrics[2]   += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
-        validation_metrics[3]   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
+        metrics['Loss/Recon']         += loss
+        metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
+        metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
+        metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
         if 'camera_translation' in labels:
+          ct = labels['camera_translation']
           batch_size, C, H, W = im1.shape
-          validation_camera_translation_mse += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+          metrics['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+    model.train()
+    for k,v in metrics.items():
+      metrics[k] = v / len(dl.dataset)
+    return metrics
 
-    if using_ddp:
-      dist.reduce(validation_metrics, 0)
-      dist.reduce(train_metrics, 0)
-      if camera_translation_mse is not None:
-        dist.reduce(camera_translation_mse)
-        dist.reduce(validation_camera_translation_mse)
-    if not using_ddp or dist.get_rank() is 0:
-      len_train_ds = len(dl_train.dataset) * (2 if forwbackwreg_coeff != 0. else 1)
-      len_validate_ds = len(dl_validation.dataset)
+  def broadcast_metrics(metrics):
+    t = torch.tensor((len(metrics.keys())), device=device)
+    for i, v in enumerate(metrics.values()):
+      t[i] = v
+    dist.reduce(t)
+    broadcasted = {}
+    for i, k in enumerate(metrics.keys()):
+      broadcasted[k] = t[i]
+    return broadcasted
 
-      epoch_loss, epoch_recon_loss = train_metrics / len_train_ds
-      avg_loss, avg_mask_mass, avg_displ_length, avg_mask_var = validation_metrics / len_validate_ds
+  step = 0
+  for e in range(0, num_epochs):
+    if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
+      dl_train.sampler.set_epoch(e)
+    metrics = defaultdict(int)
+    for im1, im2, labels in dl_train:
+      run_step(im1, im2, labels, metrics)
+      step += 1
 
-      metric={
-        'Loss/Train/Recon': epoch_recon_loss,
-        'Loss/Train/Total': epoch_loss,
-        'Loss/Validation/Recon': avg_loss,
-        'Metric/MaskMass': avg_mask_mass,
-        'Metric/DisplLength': avg_displ_length,
-        'Metric/MaskVar': avg_mask_var,
-      }
-      if camera_translation_mse is not None:
-        metric['Label/Train/CameraTranslationMSE'] = camera_translation_mse / len_train_ds
-      if validation_camera_translation_mse is not None:
-        metric['Label/Validation/CameraTranslationMSE'] = validation_camera_translation_mse / len_validate_ds
+      train_metrics = run_validation(model, dl_train)
+      validation_metrics = run_validation(model, dl_validation)
+      if using_ddp:
+        train_metrics = broadcast_metrics(train_metrics)
+        validation_metrics = broadcast_metrics(validation_metrics)
+      
+      log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
+      log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
 
-      epoch_callback(epoch=e, step=step, metric=metric)
-    if using_ddp:
-      dist.barrier()
+  if checkpoint_file is not None and epoch % checkpoint_freq == 0:
+    save(checkpoint_file, model, optimizer, rank)
+
+  if using_ddp:
+    dist.barrier()
 
   return model
 
@@ -296,19 +293,20 @@ def train(*,
 
   best_validation = math.inf
   start_time = time.monotonic()
-  def epoch_callback(*, step, epoch, metric):
+  def log_metrics(*, step, epoch, metric, prefix=''):
     nonlocal best_validation
     nonlocal start_time
+    nonlocal rank
+    if rank is not 0:
+      return
     best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
     s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
-      s += f'{k}: {v:7f} '
+      s += f'{prefix}{k}: {v:7f} '
     log.INFO(s)
     if writer is not None:
       for k,v in metric.items():
         writer.add_scalar(k, v, step)
-    if checkpoint_file is not None and epoch % checkpoint_freq == 0:
-      save(checkpoint_file, model, optimizer, rank)
     if writer is not None and vis_point is not None and epoch % vis_freq == 0:
       model.eval()
       fig = sfmnet.visualize(model, *vis_point)
@@ -329,8 +327,10 @@ def train(*,
     maskvarreg_curriculum=maskvarreg_curriculum,
     mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
-    epoch_callback=epoch_callback,
+    log_metrics=log_metrics,
     using_ddp=using_ddp,
+    checkpoint_file=checkpoint_file,
+    checkpoint_freq=checkpoint_freq,
   )
 
   if writer is not None:
