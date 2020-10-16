@@ -185,17 +185,16 @@ def train_loop(*,
       dl_train.sampler.set_epoch(e)
     metrics = defaultdict(int)
     for im1, im2, labels in dl_train:
-      run_step(im1, im2, labels, metrics)
-      step += 1
-
       train_metrics = run_validation(model, dl_train)
       validation_metrics = run_validation(model, dl_validation)
       if using_ddp:
         train_metrics = broadcast_metrics(train_metrics)
         validation_metrics = broadcast_metrics(validation_metrics)
-      
       log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
       log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
+
+      run_step(im1, im2, labels, metrics)
+      step += 1
 
     if checkpoint_file is not None and e % checkpoint_freq == 0:
       save(checkpoint_file, model, optimizer, e)
