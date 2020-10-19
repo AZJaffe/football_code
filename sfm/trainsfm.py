@@ -73,7 +73,6 @@ def train_loop(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
-  maskvarreg_curriculum=None, # Set to N and the maskvar reg will linearly increase from 0 to 1 over N steps
   mask_logit_noise_curriculum=None,
   num_epochs=1,
   start_at_epoch=0,
@@ -82,11 +81,6 @@ def train_loop(*,
   checkpoint_file=None,
   checkpoint_freq=None,
 ):
-
-  def get_maskvarreg_coeff(epoch):
-    if maskvarreg_curriculum is None:
-      return 0.
-    return min(1., epoch/maskvarreg_curriculum)
   
   def get_mask_logit_noise(epoch):
     if mask_logit_noise_curriculum is None:
@@ -126,13 +120,13 @@ def train_loop(*,
     flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
     maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
     displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
-    mask_var_reg = get_maskvarreg_coeff(e) * sfmnet.mask_variance_regularization(mask)
 
-    loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg + mask_var_reg
+    loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
       mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
       mse.backward()
+      print('Stepped')
       metrics['Label/CameraDisplMSE'] += mse.item() * input.shape[0]
     log.DEBUG(f'Before backward {step}:', memory_summary(device))
     #loss.backward()
@@ -146,28 +140,31 @@ def train_loop(*,
     model.eval()
     with torch.no_grad():
       log.DEBUG('Start of validation', memory_summary(device))
-      assert(len(dl_validation.dataset) > 0) # TODO allow no validation
-      metrics = defaultdict(int)
-      for im1, im2, labels in dl_validation:
+      assert(len(dl.dataset) > 0)
+      m = defaultdict(int)
+      for im1, im2, labels in dl:
         batch_size = im1.shape[0]
+        print('batch_size is', batch_size)
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
         loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
-        metrics['Loss/Recon']         += loss
-        metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-        metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
-        metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
+        # m['Loss/Recon']         += loss
+        # m['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
+        # m['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
+        # m['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
         if 'camera_translation' in labels:
           ct = labels['camera_translation'].to(device)
           batch_size, C, H, W = im1.shape
-          metrics['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+          loss = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+          print(loss)
+          m['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
     model.train()
-    for k,v in metrics.items():
-      metrics[k] = v / len(dl.dataset)
-    return metrics
+    for k,v in m.items():
+      m[k] = v / len(dl.dataset)
+    return m
 
   def broadcast_metrics(metrics):
     t = torch.tensor((len(metrics.keys())), device=device)
@@ -188,6 +185,7 @@ def train_loop(*,
       train_metrics = run_validation(model, dl_train)
       validation_metrics = run_validation(model, dl_validation)
       if using_ddp:
+        print('BROADCASTING'*5)
         train_metrics = broadcast_metrics(train_metrics)
         validation_metrics = broadcast_metrics(validation_metrics)
       log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
@@ -212,6 +210,7 @@ def train(*,
   checkpoint_freq=10,
   dl_num_workers=6,
   validation_split=0.1,
+  seed=42,
 
   K=1,
   camera_translation=False,
@@ -225,7 +224,6 @@ def train(*,
   maskreg_coeff=0.,
   displreg_coeff=0.,
   forwbackwreg_coeff=0.,
-  maskvarreg_curriculum=None,
   mask_logit_noise_curriculum=None,
   batch_size=16,
 
@@ -276,7 +274,7 @@ def train(*,
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
   log.DEBUG(f'Validation size {n_validation}, train size {n_train}')
-  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(42))
+  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(seed))
 
   sampler_train = torch.utils.data.DistributedSampler(ds_train) if using_ddp else None
   sampler_validation = torch.utils.data.DistributedSampler(ds_validation, shuffle=False) if using_ddp else None
@@ -331,7 +329,6 @@ def train(*,
     maskreg_coeff=maskreg_coeff,
     displreg_coeff=displreg_coeff,
     forwbackwreg_coeff=forwbackwreg_coeff,
-    maskvarreg_curriculum=maskvarreg_curriculum,
     mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
     start_at_epoch=start_at_epoch,
