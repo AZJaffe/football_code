@@ -126,7 +126,6 @@ def train_loop(*,
       ct = labels['camera_translation'].to(device)
       mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
       mse.backward()
-      print('Stepped')
       metrics['Label/CameraDisplMSE'] += mse.item() * input.shape[0]
     log.DEBUG(f'Before backward {step}:', memory_summary(device))
     #loss.backward()
@@ -144,7 +143,6 @@ def train_loop(*,
       m = defaultdict(int)
       for im1, im2, labels in dl:
         batch_size = im1.shape[0]
-        print('batch_size is', batch_size)
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
@@ -159,7 +157,6 @@ def train_loop(*,
           ct = labels['camera_translation'].to(device)
           batch_size, C, H, W = im1.shape
           loss = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
-          print(loss)
           m['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
     model.train()
     for k,v in m.items():
@@ -185,7 +182,6 @@ def train_loop(*,
       train_metrics = run_validation(model, dl_train)
       validation_metrics = run_validation(model, dl_validation)
       if using_ddp:
-        print('BROADCASTING'*5)
         train_metrics = broadcast_metrics(train_metrics)
         validation_metrics = broadcast_metrics(validation_metrics)
       log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
