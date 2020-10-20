@@ -163,32 +163,34 @@ def train_loop(*,
       m[k] = v / len(dl.dataset)
     return m
 
-  def broadcast_metrics(metrics):
+  def reduce_metrics(metrics):
+    nonlocal device
     t = torch.tensor((len(metrics.keys())), device=device)
     for i, v in enumerate(metrics.values()):
       t[i] = v
     dist.reduce(t)
-    broadcasted = {}
+    reduced = {}
     for i, k in enumerate(metrics.keys()):
-      broadcasted[k] = t[i]
-    return broadcasted
+      reduced[k] = t[i]
+    return reduced
 
   step = 0
   for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
-    metrics = defaultdict(int)
+    train_metrics = defaultdict(int)
     for im1, im2, labels in dl_train:
-      train_metrics = run_validation(model, dl_train)
-      validation_metrics = run_validation(model, dl_validation)
-      if using_ddp:
-        train_metrics = broadcast_metrics(train_metrics)
-        validation_metrics = broadcast_metrics(validation_metrics)
-      log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
-      log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
-
-      run_step(im1, im2, labels, metrics)
+      run_step(im1, im2, labels, train_metrics)
       step += 1
+    for k,v in train_metrics.items():
+      train_metrics[k] = v / len(dl_train.dataset)
+
+    validation_metrics = run_validation(model, dl_validation)
+    if using_ddp:
+      validation_metrics = reduce_metrics(validation_metrics)
+      train_metrics = reduce_metrics(train_metrics)
+    log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
+    log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
 
     if checkpoint_file is not None and e % checkpoint_freq == 0:
       save(checkpoint_file, model, optimizer, e)
@@ -301,7 +303,7 @@ def train(*,
     if rank is not 0:
       return
     best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
-    s = f'epoch: {epoch} time_elapsed: {time.monotonic() - start_time:.2f}s '
+    s = f'epoch: {epoch} step: {step} time_elapsed: {time.monotonic() - start_time:.2f}s '
     for k,v in metric.items():
       s += f'{prefix}{k}: {v:7f} '
     log.INFO(s)
@@ -311,7 +313,6 @@ def train(*,
     if writer is not None and vis_point is not None and epoch % vis_freq == 0:
       model.eval()
       fig = sfmnet.visualize(model, *vis_point)
-      fig.show()
       model.train()
       writer.add_figure(f'Visualization', fig, step)
 
