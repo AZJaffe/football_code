@@ -22,7 +22,7 @@ from pair_frames_dataset import PairConsecutiveFramesDataset
 log = logger.noop
 
 def get_rank():
-  return get_rank() if dist.is_initialized() else 0
+  return dist.get_rank() if dist.is_initialized() else 0
 
 def load(checkpoint_file, model, optimizer):
   # Returns the epoch number to start at, as well as loads the optimizer and model
