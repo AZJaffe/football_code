@@ -124,16 +124,16 @@ def train_loop(*,
     loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
-      mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct))
+      mse = torch.mean(torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct), dim=1))
       mse.backward()
-      metrics['Label/CameraDisplMSE'] += mse.item() * input.shape[0]
+      metrics['Label/CameraDisplMSE'] += mse.item() * batch_size
     log.DEBUG(f'Before backward {step}:', memory_summary(device))
     #loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
     optimizer.step()
 
-    metrics['Loss'] += loss.item() * input.shape[0]
-    metrics['ReconLoss'] += recon_loss.item() * input.shape[0]
+    metrics['Loss'] += loss.item() * batch_size
+    metrics['ReconLoss'] += recon_loss.item() * batch_size
 
   def run_validation(model, dl):
     model.eval()
@@ -142,7 +142,7 @@ def train_loop(*,
       assert(len(dl.dataset) > 0)
       m = defaultdict(int)
       for im1, im2, labels in dl:
-        batch_size = im1.shape[0]
+        batch_size, C, H, W = im1.shape
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
@@ -155,9 +155,9 @@ def train_loop(*,
 
         if 'camera_translation' in labels:
           ct = labels['camera_translation'].to(device)
-          batch_size, C, H, W = im1.shape
-          loss = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
-          m['Label/CameraDisplMSE'] += torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+          
+          mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+          m['Label/CameraDisplMSE'] += mse
     model.train()
     for k,v in m.items():
       m[k] = v / len(dl.dataset)
