@@ -87,6 +87,20 @@ def train_loop(*,
       return 0.
     return min(1., epoch/mask_logit_noise_curriculum)
 
+  def update_metrics(*, metrics, labels, output, displacement, mask, loss=None, recon_loss):
+    if loss is not None:
+      metrics['Loss/Total']       += loss
+    metrics['Loss/Recon']         += recon_loss
+    # metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
+    # metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
+    # metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
+
+    if 'camera_translation' in labels:
+      ct = labels['camera_translation'].to(device)
+      H,W = tuple(mask.shape[2:4])
+      mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+      metrics['Label/CameraDisplMSE'] += mse
+
   def run_step(im1, im2, labels, metrics):
     optimizer.zero_grad()
     im1, im2 = im1.to(device), im2.to(device)
@@ -122,18 +136,20 @@ def train_loop(*,
     displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
 
     loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
-    if 'camera_translation' in labels:
-      ct = labels['camera_translation'].to(device)
-      mse = torch.mean(torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2,H/2], device=device) - ct), dim=1))
-      mse.backward()
-      metrics['Label/CameraDisplMSE'] += mse.item() * batch_size
     log.DEBUG(f'Before backward {step}:', memory_summary(device))
-    #loss.backward()
+    loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
     optimizer.step()
 
-    metrics['Loss'] += loss.item() * batch_size
-    metrics['ReconLoss'] += recon_loss.item() * batch_size
+    update_metrics(
+      metrics=metrics, 
+      loss=loss.item() * batch_size, 
+      recon_loss=recon_loss.item() * batch_size,
+      output=output, 
+      labels=labels, 
+      displacement=displacement, 
+      mask=mask, 
+    )
 
   def run_validation(model, dl):
     model.eval()
@@ -146,18 +162,17 @@ def train_loop(*,
         im1, im2 = im1.to(device), im2.to(device)
         input = torch.cat((im1, im2), dim=1)
         output, mask, flow, displacement = model(input)
-        loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
+        recon_loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
 
-        # m['Loss/Recon']         += loss
-        # m['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-        # m['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
-        # m['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
+        update_metrics(
+          metrics=m,
+          labels=labels,
+          recon_loss=recon_loss,
+          output=output,
+          mask=mask,
+          displacement=displacement,
+        )
 
-        if 'camera_translation' in labels:
-          ct = labels['camera_translation'].to(device)
-          
-          mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
-          m['Label/CameraDisplMSE'] += mse
     model.train()
     for k,v in m.items():
       m[k] = v / len(dl.dataset)
