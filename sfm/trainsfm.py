@@ -165,7 +165,7 @@ def train_loop(*,
 
   def reduce_metrics(metrics):
     nonlocal device
-    t = torch.tensor((len(metrics.keys())), device=device)
+    t = torch.empty(len(metrics.keys()), device=device)
     for i, v in enumerate(metrics.values()):
       t[i] = v
     dist.reduce(t)
