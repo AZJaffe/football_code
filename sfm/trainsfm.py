@@ -168,7 +168,7 @@ def train_loop(*,
     t = torch.empty(len(metrics.keys()), device=device)
     for i, v in enumerate(metrics.values()):
       t[i] = v
-    dist.reduce(t)
+    dist.reduce(t, dst=0)
     reduced = {}
     for i, k in enumerate(metrics.keys()):
       reduced[k] = t[i]
