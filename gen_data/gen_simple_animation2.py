@@ -39,7 +39,7 @@ def display_frames(frames):
   plt.show()
 
 # size should be np array of size (2,)
-def generate_random_frames(out_dir, H=24, W=40, radius=3, speed=5, total_frames=1000,):
+def generate_random_frames(out_dir, H=24, W=40, radius=5, speed=7, total_frames=1000,):
   size = np.array([W, H])
   try:
     os.makedirs(out_dir)
