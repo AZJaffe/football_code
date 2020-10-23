@@ -188,10 +188,10 @@ def l1_flow_regularization(masks, displacements):
   """
 
   # If there is camera translation, drop it and don't include it in the regularization
-  if masks.shape[1] == 0:
-    return 0
-  if displacements.shape[1] != masks.shape[1]:
-    displacements = displacements[:,1:]
+  N, C, H, W = masks.shape
+  if displacements.shape[1] != C:
+    #displacements = displacements[:,1:]
+    masks = torch.cat((torch.ones(N,1,H,W, device=masks.device), masks))
   # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
     torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4),)
