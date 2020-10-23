@@ -92,7 +92,7 @@ def train_loop(*,
       metrics['Loss/Total']       += loss
     metrics['Loss/Recon']         += recon_loss
     # metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-    # metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
+    metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,))) # L1 displacements
     # metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
     if 'camera_translation' in labels:
