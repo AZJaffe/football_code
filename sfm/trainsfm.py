@@ -193,6 +193,7 @@ def train_loop(*,
   for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
+    validation_metrics = run_validation(model, dl_validation)
     train_metrics = defaultdict(int)
     for im1, im2, labels in dl_train:
       run_step(im1, im2, labels, train_metrics)
@@ -200,7 +201,6 @@ def train_loop(*,
     for k,v in train_metrics.items():
       train_metrics[k] = v / len(dl_train.dataset)
 
-    validation_metrics = run_validation(model, dl_validation)
     if using_ddp:
       validation_metrics = reduce_metrics(validation_metrics)
       train_metrics = reduce_metrics(train_metrics)
