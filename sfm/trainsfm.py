@@ -123,7 +123,8 @@ def train_loop(*,
     # backward forward regularization induces a prior on the output of the network
     # that encourages the output from going forward in time is consistent with
     # the output from going backward in time.
-    # Precisely, the masks should be the same and the displacements should be the negations of each other 
+    # Precisely, the masks should be the same and the displacements should be the negations of each other
+    # THIS IS BUGGY - FIX
     if forwbackw_data_augmentation is True:
       forwbackwreg = forwbackwreg_coeff * (
         torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
@@ -325,11 +326,16 @@ def train(*,
     if writer is not None:
       for k,v in metric.items():
         writer.add_scalar(k, v, step)
-    if writer is not None and vis_point is not None and epoch % vis_freq == 0:
+
+    if vis_point is not None and epoch % vis_freq == 0:
       model.eval()
       fig = sfmnet.visualize(model, *vis_point)
       model.train()
-      writer.add_figure(f'Visualization', fig, step)
+      if writer is not None:
+        writer.add_figure(f'Visualization', fig, step)
+      else:
+        pass
+        #plt.show()
 
   train_loop(
     device=device,

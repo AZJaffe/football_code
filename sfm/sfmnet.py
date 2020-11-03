@@ -1,10 +1,12 @@
 
+import kornia
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import math
 import matplotlib.pyplot as plt
+import matplotlib.colors
 import numpy as np
-import kornia
 
 class ConvEncoder(torch.nn.Module):
   def __init__(self, *, H, W, im_channels, C=16, conv_depth=2):
@@ -191,7 +193,7 @@ def l1_flow_regularization(masks, displacements):
   N, C, H, W = masks.shape
   if displacements.shape[1] != C:
     #displacements = displacements[:,1:]
-    masks = torch.cat((torch.ones(N,1,H,W, device=masks.device), masks))
+    masks = torch.cat((torch.ones(N,1,H,W, device=masks.device), masks), dim=1)
   # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
   return torch.mean( \
     torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4),)
@@ -250,15 +252,6 @@ def visualize(model, im1, im2):
 
   B,C,H,W = im1_cpu.shape
 
-  flow *= torch.tensor([W/2, H/2]) # scale flow so that its units match with the image
-  x_masked_flow = np.ma.masked_where(
-    torch.sum(torch.abs(flow), dim=-1) < 2/3, # mask out all flows whose L1 length is less than 2/3 of a pixel
-    flow[...,0]
-  )
-  y_masked_flow = np.ma.masked_where(
-    torch.sum(torch.abs(flow), dim=-1) < 2/3, # mask out all flows whose L1 length is less than 2/3 of a pixel
-    flow[...,1]
-  )
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
   for b in range(B):
@@ -277,27 +270,42 @@ def visualize(model, im1, im2):
     ax[2*b][0].set_title('1st Input')
 
 
-    ax[2*b][1].imshow(predfirst, interpolation='none', vmin=0., vmax=1.)
-    ax[2*b][1].quiver(x_masked_flow[b+B], y_masked_flow[b+B], scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b][1].set_title(f'Pred 1st w/ flow\n(l={loss[b+B]:.8f})' , wrap=True)
+    ax[2*b][1].imshow(vis_flow(flow[b+B]), interpolation='none', vmin=0., vmax=1.)
+    ax[2*b][1].set_title(f'F_12\n(l={loss[b+B]:.8f})', wrap=True)
 
     for k in range(K):
-      ax[2*b][2+k].imshow(rgb2gray(predfirst), interpolation='none', cmap='gray', vmin=0., vmax=1.)
+      ax[2*b][2+k].imshow(rgb2gray(first), interpolation='none', cmap='gray', vmin=0., vmax=1.)
       ax[2*b][2+k].imshow(mask[b+B,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
-      ax[2*b][2+k].set_title('Pred 1st w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b+B,k,0], displacement[b+B,k,1], torch.sum(mask[b+B,k])))
+      ax[2*b][2+k].set_title('1st w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b+B,k,0], displacement[b+B,k,1], torch.sum(mask[b+B,k])))
 
     ######### Second Row ###############
     ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
     ax[2*b+1][0].set_title('2nd Input')
 
-    ax[2*b+1][1].imshow(predsecond, interpolation='none', vmin=0., vmax=1.)
-    ax[2*b+1][1].quiver(x_masked_flow[b], y_masked_flow[b], scale=1, scale_units='xy', angles='xy', color='red') 
-    ax[2*b+1][1].set_title(f'Pred 2nd w/ flow\n(l={loss[b]:.8f})', wrap=True)
+    ax[2*b+1][1].imshow(vis_flow(flow[b]), interpolation='none', vmin=0., vmax=1.)
+    ax[2*b+1][1].set_title(f'F_21\n(l={loss[b]:.8f})', wrap=True)
 
     for k in range(K):
-      ax[2*b+1][2+k].imshow(rgb2gray(predsecond), interpolation='none', cmap='gray', vmin=0., vmax=1.)
+      ax[2*b+1][2+k].imshow(rgb2gray(second), interpolation='none', cmap='gray', vmin=0., vmax=1.)
       ax[2*b+1][2+k].imshow(mask[b,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
-      ax[2*b+1][2+k].set_title('Pred 2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b,k,0], displacement[b,k,1], torch.sum(mask[b,k])))
+      ax[2*b+1][2+k].set_title('2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b,k,0], displacement[b,k,1], torch.sum(mask[b,k])))
     
   fig.tight_layout()
   return fig
+
+def normalize(a):
+    max = np.max(a)
+    min = np.min(a)
+    if max == min:
+      return np.ones_like(a)
+    return (a - min) / (max - min)
+
+def vis_flow(flow):
+  ### flow should be HxWx2
+    angle = (np.arctan2(flow[...,1], -flow[...,0])) + 3 * math.pi / 2  # The sum rotates the colors
+    angle = angle % (2 * math.pi) # Make sure that the values are in the range [0, 2pi]
+    angle = angle / 2 / math.pi # Normalize to [0,1]
+    mag = normalize(np.linalg.norm(flow, axis=2))
+    ones = np.ones_like(angle)
+    hsv = np.stack((angle, mag, ones), axis=2)
+    return matplotlib.colors.hsv_to_rgb(hsv)
