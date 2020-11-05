@@ -67,6 +67,24 @@ class ConvDecoder(torch.nn.Module):
     masks = torch.sigmoid(logits + noise)
     return masks
 
+
+class SpatialTransform(torch.nn.Module):
+  def __init__(self, *, C, H, W, max_batch_size=16):
+    super(SpatialTransform, self).__init__()
+    identity_affine = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
+    batched_identity = F.affine_grid( \
+      # Need to batchify identitiy_affine_transform
+      identity_affine.unsqueeze(0).repeat(max_batch_size, 1, 1), \
+      (max_batch_size, C, H, W), \
+      align_corners=False
+    )
+    self.register_buffer('batched_identity', batched_identity)
+  
+  def forward(self, im, flow):
+    B = im.shape[0]
+    grid = self.batched_identity[0:B] + flow
+    return F.grid_sample(im, grid, align_corners=False, padding_mode="border")
+
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
 
@@ -88,6 +106,7 @@ class SfMNet(torch.nn.Module):
 
     self.encoder = ConvEncoder(H=H,W=W,im_channels=im_channels,C=C, conv_depth=conv_depth)
     self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K) if K is not 0 else None
+    self.spatial_transform = SpatialTransform(H=H,C=C,W=W)
 
     #####################
     #     FC Layers     #
@@ -143,15 +162,7 @@ class SfMNet(torch.nn.Module):
       flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
     # flow has size (batch_size, H, W, 2)
 
-    # identity is not a function of any of the forward parameters
-    identity = F.affine_grid( \
-      # Need to batchify identitiy_affine_transform
-      self.identity_affine_transform.unsqueeze(0).repeat(batch_size, 1, 1), \
-      (batch_size, self.im_channels, self.H, self.W), \
-      align_corners=False
-    )
-    grid = identity + flow
-    out = F.grid_sample(input[:,0:self.im_channels], grid, align_corners=False, padding_mode="border")
+    out = self.spatial_transform(input[:,0:self.im_channels], flow)
     
     return out, masks, flow, displacements
 
