@@ -371,7 +371,7 @@ def train(*,
     save(checkpoint_file, model, optimizer, num_epochs)
   if using_ddp:
     cleanup_dist()
-  # return model
+  return model
 
 
 def setup_dist():
