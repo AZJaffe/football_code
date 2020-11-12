@@ -98,8 +98,8 @@ def train_loop(*,
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
       H,W = tuple(mask.shape[2:4])
-      mse = torch.sum(torch.square(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
-      metrics['Label/CameraDisplMSE'] += mse
+      ae = torch.sum(torch.abs(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+      metrics['Label/CameraDisplAE'] += ae
 
   def run_step(im1, im2, labels, metrics):
     optimizer.zero_grad()
