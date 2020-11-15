@@ -325,7 +325,7 @@ def train(*,
     log.INFO(s)
     if writer is not None:
       for k,v in metric.items():
-        writer.add_scalar(k, v, step)
+        writer.add_scalar(prefix+k, v, step)
 
     if vis_point is not None and epoch % vis_freq == 0:
       model.eval()
