@@ -83,7 +83,7 @@ class SpatialTransform(torch.nn.Module):
   def forward(self, im, flow):
     B = im.shape[0]
     grid = self.batched_identity[0:B] + flow
-    return F.grid_sample(im, grid, align_corners=False, padding_mode="border")
+    return F.grid_sample(im, grid, align_corners=False, padding_mode="zeros")
 
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
@@ -165,21 +165,51 @@ class SfMNet(torch.nn.Module):
     out = self.spatial_transform(input[:,0:self.im_channels], flow)
     
     return out, masks, flow, displacements
+  
 
-# def l1_recon_loss(p,q, reduction=torch.mean):
-#   """ Computes the mean L1 reconstructions loss of a batch
+class LossModule(torch.nn.Module):
 
-#   p - The first image in the sequence
-#   q - The second image in the sequence
+  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
+    super(LossModule, self).__init__()
+    self.sfm_model = sfm_model
+    self.dssim_coeff = dssim_coeff
+    self.l1_photometric_coeff = l1_photometric_coeff
+    self.l1_flow_reg_coeff = l1_flow_reg_coeff
 
-#   p,q should both have shape NxCxHxW
-#   """
+  def forward(self, im1, im2, mask_logit_noise_var=0., reduction=torch.mean):
+    """ Returns the loss for the model 
+      im1: Batch of first images in the temporal sequence
+      im2: Batch of second images in the temporal sequence
+      mask_logit_noise_var: Passed onto the model
+      reduction: either 'mean' or None. 'mean' will return a scalar of the mean loss over the batch,
+      while None will return the loss for each element of the batch.
+    """
+    
+    inp = torch.cat((im1, im2), dim=1)
+    out, mask, flow, displacement = self.sfm_model(inp)
+    dssim = dssim_loss(out, im2, reduction=reduction) if self.dssim_coeff is not 0. else 0.
+    l1_photometric = l1_photometric_loss(out, im2, reduction=reduction) if l1_photometric_loss is not 0. else 0.
+    flow_reg_loss = l1_flow_regularization(mask, displacement, reduction=reduction) if self.l1_flow_reg_coeff is not 0. else 0.
 
-#   loss = torch.mean(torch.sum(torch.abs(p - q), dim=(1,)), dim=(1,2))
-#   if reduction is not None:
-#     return reduction(loss)
-#   else:
-#     return loss
+    photometric_loss = self.dssim_coeff * dssim + self.l1_photometric_coeff * l1_photometric
+    total_loss =  self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss
+    return total_loss, photometric_loss, out, mask, flow, displacement
+
+
+def l1_photometric_loss(p,q, reduction=torch.mean):
+  """ Computes the mean L1 reconstructions loss of a batch
+
+  p - The first image in the sequence
+  q - The second image in the sequence
+
+  p,q should both have shape NxCxHxW
+  """
+
+  loss = torch.mean(torch.sum(torch.abs(p - q), dim=(1,)), dim=(1,2))
+  if reduction is not None:
+    return reduction(loss)
+  else:
+    return loss
 
 def dssim_loss(p,q, reduction=torch.mean):
   loss = torch.mean(kornia.losses.ssim(p, q, 11), dim=(1,2,3))
@@ -188,7 +218,7 @@ def dssim_loss(p,q, reduction=torch.mean):
   else:
     return loss
 
-def l1_flow_regularization(masks, displacements):
+def l1_flow_regularization(masks, displacements, reduction=None):
   """ Computes the mean L1 norm of the flow across the batch
 
   This is a bit different than flow returned by the model.
@@ -206,9 +236,11 @@ def l1_flow_regularization(masks, displacements):
     #displacements = displacements[:,1:]
     masks = torch.cat((torch.ones(N,1,H,W, device=masks.device), masks), dim=1)
   # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
-  return torch.mean( \
-    torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4),)
-  )
+  loss = torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4))
+  if reduction is not None:
+    return reduction(loss)
+  else:
+    return loss
 
 def l1_mask_regularization(mask):
   """ Computes the mean L1 of the masks
@@ -242,6 +274,7 @@ def l2_displacement_regularization(displacement):
 
 def visualize(model, im1, im2):
   # TODO Figure out what to do with camera translation
+  # TODO only show one row, not both forw and backw
   """ im1 and im2 should be size BxCxHxW """
   def rgb2gray(rgb):
     if len(rgb.shape) == 2 or rgb.shape[2] == 1:
