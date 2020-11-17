@@ -94,7 +94,8 @@ def train_loop(*,
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
       H,W = tuple(mask.shape[2:4])
-      ae = torch.sum(torch.abs(displacement[:,0] * torch.tensor([W/2, H/2], device=device) - ct))
+      N = ct.shape[0] # Need this in case using forwbackw and so batch size of displacement is 2*N
+      ae = torch.sum(torch.abs(displacement[0:N,0] * torch.tensor([W/2, H/2], device=device) - ct))
       metrics['Label/CameraDisplAE'] += ae
 
   def run_step(im1, im2, labels, metrics):
@@ -102,38 +103,8 @@ def train_loop(*,
     im1, im2 = im1.to(device), im2.to(device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
-    # forwardbatch = torch.cat((im1, im2), dim=1)
-    # if forwbackw_data_augmentation:
-    #   backwardbatch = torch.cat((im2, im1), dim=1)
-    #   input = torch.cat((forwardbatch, backwardbatch), dim=0)
-    #   # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
-    #   target = torch.cat((im2, im1), dim=0)
-    # else:
-    #   input = forwardbatch
-    #   target = im2
     total_loss, recon_loss, output, mask, flow, displacement = model(im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
     log.DEBUG(f'After forward {step}:', memory_summary(device))
-
-      
-    # recon_loss = sfmnet.dssim_loss(target, output)
-    # backward forward regularization induces a prior on the output of the network
-    # that encourages the output from going forward in time is consistent with
-    # the output from going backward in time.
-    # Precisely, the masks should be the same and the displacements should be the negations of each other
-    # THIS IS BUGGY - FIX
-    # if forwbackw_data_augmentation is True:
-    #   forwbackwreg = forwbackwreg_coeff * (
-    #     torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
-    #     + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
-    #   )
-    # else:
-    #   forwbackwreg = 0.
-    # flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
-    # maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
-    # displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
-
-    # loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
-    log.DEBUG(f'Before backward {step}:', memory_summary(device))
     total_loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
     optimizer.step()
@@ -233,6 +204,7 @@ def train(*,
   num_hidden_layers=1,
   conv_depth=2,
   flowreg_coeff=0.,
+  forwbackw_reg_coeff=0.,
 
   lr=0.001,
   mask_logit_noise_curriculum=None,
@@ -256,9 +228,14 @@ def train(*,
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
 
-  model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
+  loss_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
 
-  n_params = model.total_params()
+  if forwbackw_reg_coeff is not 0.:
+    model = sfmnet.ForwBackwLoss(loss_model, forwbackw_reg_coeff)
+  else:
+    model = loss_model
+
+  n_params = sfm.total_params()
   
   if using_ddp:
     setup_dist()
@@ -280,7 +257,7 @@ def train(*,
   log.INFO('Training on', device)
   log.DEBUG(f'Inputs has size ({im_channels},{H},{W})')
 
-  optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+  optimizer = torch.optim.Adam(sfm.parameters(), lr=lr)
   start_at_epoch = 0
   if checkpoint_file is not None:
     start_at_epoch = load(checkpoint_file, model, optimizer)
@@ -300,7 +277,7 @@ def train(*,
 
   if tensorboard_dir is not None and rank is 0:
     writer = SummaryWriter(log_dir=tensorboard_dir)
-    writer.add_text('model_summary', str(model))
+    writer.add_text('model_summary', str(sfm))
   else:
     writer = None
 
@@ -329,7 +306,7 @@ def train(*,
 
     if vis_point is not None and epoch % vis_freq == 0:
       model.eval()
-      fig = sfmnet.visualize(model, *vis_point)
+      fig = sfmnet.visualize(loss_model, *vis_point)
       model.train()
       if writer is not None:
         writer.add_figure(f'Visualization', fig, step)

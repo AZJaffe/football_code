@@ -169,12 +169,13 @@ class SfMNet(torch.nn.Module):
 
 class LossModule(torch.nn.Module):
 
-  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
+  def __init__(self, sfm_model, dssim_coeff=1., forwbackw_reg=0., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
     super(LossModule, self).__init__()
     self.sfm_model = sfm_model
     self.dssim_coeff = dssim_coeff
     self.l1_photometric_coeff = l1_photometric_coeff
     self.l1_flow_reg_coeff = l1_flow_reg_coeff
+    self.forwbackw_reg = forwbackw_reg
 
   def forward(self, im1, im2, mask_logit_noise_var=0., reduction=torch.mean):
     """ Returns the loss for the model 
@@ -195,6 +196,25 @@ class LossModule(torch.nn.Module):
     total_loss =  self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss
     return total_loss, photometric_loss, out, mask, flow, displacement
 
+
+class ForwBackwLoss(torch.nn.Module):
+  def __init__(self, loss_module, forwbackw_coeff):
+    super(ForwBackwLoss, self).__init__()
+    self.loss_module = loss_module
+    self.forwbackw_coeff = forwbackw_coeff
+
+  def forward(self, im1, im2, mask_logit_noise_var=0.0):
+
+    N = im1.shape[0]
+
+    forw = torch.cat((im1, im2), dim=0)
+    backw = torch.cat((im2, im1), dim=0)
+    total_loss, photometric_loss, out, mask, flow, displacement = self.loss_module(forw, backw, mask_logit_noise_var)
+
+    forwbackw_loss = torch.mean(torch.sum(torch.abs(displacement[0:N] - displacement[N:2*N]), dim=(1,2)))
+    total_loss += self.forwbackw_coeff * forwbackw_loss
+    # Note that out, mask, flow, displacement will have batch size 2*N !
+    return total_loss, photometric_loss, out, mask, flow, displacement
 
 def l1_photometric_loss(p,q, reduction=torch.mean):
   """ Computes the mean L1 reconstructions loss of a batch
