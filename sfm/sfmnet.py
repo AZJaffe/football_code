@@ -169,13 +169,12 @@ class SfMNet(torch.nn.Module):
 
 class LossModule(torch.nn.Module):
 
-  def __init__(self, sfm_model, dssim_coeff=1., forwbackw_reg=0., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
+  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
     super(LossModule, self).__init__()
     self.sfm_model = sfm_model
     self.dssim_coeff = dssim_coeff
     self.l1_photometric_coeff = l1_photometric_coeff
     self.l1_flow_reg_coeff = l1_flow_reg_coeff
-    self.forwbackw_reg = forwbackw_reg
 
   def forward(self, im1, im2, mask_logit_noise_var=0., reduction=torch.mean):
     """ Returns the loss for the model 
