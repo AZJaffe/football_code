@@ -186,7 +186,7 @@ class LossModule(torch.nn.Module):
     """
     
     inp = torch.cat((im1, im2), dim=1)
-    out, mask, flow, displacement = self.sfm_model(inp)
+    out, mask, flow, displacement = self.sfm_model(inp, mask_logit_noise_var)
     dssim = dssim_loss(out, im2, reduction=reduction) if self.dssim_coeff is not 0. else 0.
     l1_photometric = l1_photometric_loss(out, im2, reduction=reduction) if l1_photometric_loss is not 0. else 0.
     flow_reg_loss = l1_flow_regularization(mask, displacement, reduction=reduction) if self.l1_flow_reg_coeff is not 0. else 0.
@@ -283,11 +283,7 @@ def visualize(model, im1, im2):
     return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140])
 
   with torch.no_grad():
-    forwardbatch = torch.cat((im1, im2), dim=1)
-    backwardbatch = torch.cat((im2, im1), dim=1)
-    input = torch.cat((forwardbatch, backwardbatch), dim=0)
-    output, mask, flow, displacement = model(input)
-    loss = dssim_loss(torch.cat((im2, im1), dim=0), output, reduction=None)
+    total_loss, photometric_loss, output, mask, flow, displacement = model(im1, im2)
     output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
     K = mask.shape[1]
 
@@ -299,41 +295,24 @@ def visualize(model, im1, im2):
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B, ncols=(2+K), squeeze=False,)
 
   for b in range(B):
-    first = im1_cpu[b].permute(1,2,0)
     second = im2_cpu[b].permute(1,2,0)
-    predfirst = output[b+B].permute(1,2,0)
     predsecond = output[b].permute(1,2,0)
     if C == 1:
-      first = first.squeeze(2)
       second = second.squeeze(2)
-      predfirst = predfirst.squeeze(2)
       predsecond = predsecond.squeeze(2)
 
-    ######### First Row ###############
-    ax[2*b][0].imshow(first, interpolation='none', vmin=0., vmax=1.)
-    ax[2*b][0].set_title('1st Input')
+    ax[2*b][0].imshow(second, interpolation='none', vmin=0., vmax=1.)
+    ax[2*b][0].set_title('2nd Input Image')
 
 
-    ax[2*b][1].imshow(vis_flow(flow[b+B]), interpolation='none', vmin=0., vmax=1.)
-    ax[2*b][1].set_title(f'F_12\n(l={loss[b+B]:.8f})', wrap=True)
-
-    for k in range(K):
-      ax[2*b][2+k].imshow(rgb2gray(first), interpolation='none', cmap='gray', vmin=0., vmax=1.)
-      ax[2*b][2+k].imshow(mask[b+B,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
-      ax[2*b][2+k].set_title('1st w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b+B,k,0], displacement[b+B,k,1], torch.sum(mask[b+B,k])))
-
-    ######### Second Row ###############
-    ax[2*b+1][0].imshow(second, vmin=0., vmax=1.)
-    ax[2*b+1][0].set_title('2nd Input')
-
-    ax[2*b+1][1].imshow(vis_flow(flow[b]), interpolation='none', vmin=0., vmax=1.)
-    ax[2*b+1][1].set_title(f'F_21\n(l={loss[b]:.8f})', wrap=True)
+    ax[2*b][1].imshow(vis_flow(flow[b]), interpolation='none', vmin=0., vmax=1.)
+    ax[2*b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b+B]:.8f})', wrap=True)
 
     for k in range(K):
-      ax[2*b+1][2+k].imshow(rgb2gray(second), interpolation='none', cmap='gray', vmin=0., vmax=1.)
-      ax[2*b+1][2+k].imshow(mask[b,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
-      ax[2*b+1][2+k].set_title('2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b,k,0], displacement[b,k,1], torch.sum(mask[b,k])))
-    
+      ax[2*b][2+k].imshow(rgb2gray(predsecond), interpolation='none', cmap='gray', vmin=0., vmax=1.)
+      ax[2*b][2+k].imshow(mask[b,k], interpolation='none', alpha=0.9, vmin=0., vmax=1., cmap='Reds')
+      ax[2*b][2+k].set_title('Recon 2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (k, displacement[b,k,0], displacement[b,k,1], torch.sum(mask[b,k])))
+
   fig.tight_layout()
   return fig
 

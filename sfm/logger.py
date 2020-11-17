@@ -27,7 +27,4 @@ class logger():
     print(f'[{datetime.now().strftime("%Y-%m-%d %H:%M:%S")}]:', *s)
 
 
-__LEVEL_NOOP = 1000
-class noop(logger):
-  def __init__(self):
-    super().__init__(__LEVEL_NOOP, 1)
+noop = logger(LEVEL_DEBUG, 1)

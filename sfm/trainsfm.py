@@ -64,15 +64,11 @@ def noop_callback(*a, **k):
 def train_loop(*,
   device,
   dl_train,
-  dl_validation,
+  dl_validation=None,
   vis_point=None,
   model,
   optimizer,
   forwbackw_data_augmentation=False, # If this is True, the batch size will be twice the size of the batch of dl_train
-  flowreg_coeff=0.,
-  maskreg_coeff=0.,
-  displreg_coeff=0.,
-  forwbackwreg_coeff=0.,
   mask_logit_noise_curriculum=None,
   num_epochs=1,
   start_at_epoch=0,
@@ -106,45 +102,45 @@ def train_loop(*,
     im1, im2 = im1.to(device), im2.to(device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
-    forwardbatch = torch.cat((im1, im2), dim=1)
-    if forwbackw_data_augmentation:
-      backwardbatch = torch.cat((im2, im1), dim=1)
-      input = torch.cat((forwardbatch, backwardbatch), dim=0)
-      # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
-      target = torch.cat((im2, im1), dim=0)
-    else:
-      input = forwardbatch
-      target = im2
-    output, mask, flow, displacement = model(input, mask_logit_noise_var=get_mask_logit_noise(e))
+    # forwardbatch = torch.cat((im1, im2), dim=1)
+    # if forwbackw_data_augmentation:
+    #   backwardbatch = torch.cat((im2, im1), dim=1)
+    #   input = torch.cat((forwardbatch, backwardbatch), dim=0)
+    #   # The target of the first batch_size outputs is im2 and the target of the second B outputs is im1
+    #   target = torch.cat((im2, im1), dim=0)
+    # else:
+    #   input = forwardbatch
+    #   target = im2
+    total_loss, recon_loss, output, mask, flow, displacement = model(im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
     log.DEBUG(f'After forward {step}:', memory_summary(device))
 
       
-    recon_loss = sfmnet.dssim_loss(target, output)
+    # recon_loss = sfmnet.dssim_loss(target, output)
     # backward forward regularization induces a prior on the output of the network
     # that encourages the output from going forward in time is consistent with
     # the output from going backward in time.
     # Precisely, the masks should be the same and the displacements should be the negations of each other
     # THIS IS BUGGY - FIX
-    if forwbackw_data_augmentation is True:
-      forwbackwreg = forwbackwreg_coeff * (
-        torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
-        + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
-      )
-    else:
-      forwbackwreg = 0.
-    flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
-    maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
-    displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
+    # if forwbackw_data_augmentation is True:
+    #   forwbackwreg = forwbackwreg_coeff * (
+    #     torch.mean(torch.sum(torch.abs(mask[0:batch_size] - mask[batch_size: 2*batch_size]), dim=(1,)))
+    #     + torch.mean(torch.sum(torch.square(displacement[0:batch_size] + displacement[batch_size: 2*batch_size]), dim=(1,2)))
+    #   )
+    # else:
+    #   forwbackwreg = 0.
+    # flowreg = flowreg_coeff * sfmnet.l1_flow_regularization(mask, displacement)
+    # maskreg = maskreg_coeff * sfmnet.l1_mask_regularization(mask)
+    # displreg = displreg_coeff * sfmnet.l2_displacement_regularization(displacement)
 
-    loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
+    # loss = recon_loss + flowreg + maskreg + displreg + forwbackwreg
     log.DEBUG(f'Before backward {step}:', memory_summary(device))
-    loss.backward()
+    total_loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
     optimizer.step()
 
     update_metrics(
       metrics=metrics, 
-      loss=loss.item() * batch_size, 
+      loss=total_loss.item() * batch_size, 
       recon_loss=recon_loss.item() * batch_size,
       output=output, 
       labels=labels, 
@@ -194,7 +190,8 @@ def train_loop(*,
   for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
-    validation_metrics = run_validation(model, dl_validation)
+    if dl_validation is not None:
+      validation_metrics = run_validation(model, dl_validation)
     train_metrics = defaultdict(int)
     for im1, im2, labels in dl_train:
       run_step(im1, im2, labels, train_metrics)
@@ -203,9 +200,12 @@ def train_loop(*,
       train_metrics[k] = v / len(dl_train.dataset)
 
     if using_ddp:
-      validation_metrics = reduce_metrics(validation_metrics)
+      if dl_validation is not None:
+        validation_metrics = reduce_metrics(validation_metrics)
       train_metrics = reduce_metrics(train_metrics)
-    log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
+
+    if dl_validation is not None:
+      log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
     log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
 
     if checkpoint_file is not None and e % checkpoint_freq == 0:
@@ -232,12 +232,9 @@ def train(*,
   fc_layer_width=128,
   num_hidden_layers=1,
   conv_depth=2,
+  flowreg_coeff=0.,
 
   lr=0.001,
-  flowreg_coeff=0.,
-  maskreg_coeff=0.,
-  displreg_coeff=0.,
-  forwbackwreg_coeff=0.,
   mask_logit_noise_curriculum=None,
   batch_size=16,
 
@@ -254,10 +251,13 @@ def train(*,
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
   
-  model = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
+  sfm = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
+
+  model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
+
   n_params = model.total_params()
   
   if using_ddp:
@@ -343,10 +343,6 @@ def train(*,
     dl_train=dl_train,
     dl_validation=dl_validation,
     optimizer=optimizer,
-    flowreg_coeff=flowreg_coeff,
-    maskreg_coeff=maskreg_coeff,
-    displreg_coeff=displreg_coeff,
-    forwbackwreg_coeff=forwbackwreg_coeff,
     mask_logit_noise_curriculum=mask_logit_noise_curriculum,
     num_epochs=num_epochs,
     start_at_epoch=start_at_epoch,
@@ -359,10 +355,7 @@ def train(*,
   if writer is not None:
     writer.add_hparams({
       'lr':lr,
-      'maskreg': maskreg_coeff,
-      'displreg': displreg_coeff,
       'flowreg': flowreg_coeff,
-      'forwbackwreg': forwbackwreg_coeff,
     },{
       'Validation/Recon': best_validation
     })
