@@ -259,10 +259,10 @@ def train(*,
   if using_ddp:
     setup_dist()
     device = torch.device('cuda', 0)
-    model = DDP(model.to(device), device_ids=[device])
+    model = DDP(train_model.to(device), device_ids=[device])
   elif torch.cuda.is_available():
     device = torch.device('cuda', 0)
-    model = model.to(device)
+    model = train_model.to(device)
   else:
     device = torch.device('cpu')
 
