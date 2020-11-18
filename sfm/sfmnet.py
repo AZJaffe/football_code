@@ -202,18 +202,25 @@ class ForwBackwLoss(torch.nn.Module):
     self.loss_module = loss_module
     self.forwbackw_coeff = forwbackw_coeff
 
-  def forward(self, im1, im2, mask_logit_noise_var=0.0):
+  def forward(self, im1, im2, mask_logit_noise_var=0.0, reduction=torch.mean):
 
     N = im1.shape[0]
 
     forw = torch.cat((im1, im2), dim=0)
     backw = torch.cat((im2, im1), dim=0)
-    total_loss, photometric_loss, out, mask, flow, displacement = self.loss_module(forw, backw, mask_logit_noise_var)
+    total_loss, photometric_loss, out, mask, flow, displacement = self.loss_module(forw, backw, mask_logit_noise_var, reduction=reduction)
 
-    forwbackw_loss = torch.mean(torch.sum(torch.abs(displacement[0:N] - displacement[N:2*N]), dim=(1,2)))
+    forwbackw_loss = forwbackw_displacement_loss(displacement[0:N],displacement[N:2*N], reduction=reduction)
     total_loss += self.forwbackw_coeff * forwbackw_loss
     # Note that out, mask, flow, displacement will have batch size 2*N !
     return total_loss, photometric_loss, out, mask, flow, displacement
+
+def forwbackw_displacement_loss(forwdispl, backwdispl, reduction=torch.mean):
+  loss = torch.sum(torch.abs(forwdispl - backwdispl), dim=(1,2))
+  if reduction is not None:
+    return reduction(loss)
+  else:
+    return loss
 
 def l1_photometric_loss(p,q, reduction=torch.mean):
   """ Computes the mean L1 reconstructions loss of a batch
@@ -254,8 +261,8 @@ def l1_flow_regularization(masks, displacements, reduction=None):
   if displacements.shape[1] != C:
     #displacements = displacements[:,1:]
     masks = torch.cat((torch.ones(N,1,H,W, device=masks.device), masks), dim=1)
-  # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,H,W,2 then meaned across N
-  loss = torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4))
+  # After the unsqueezes, the shape is NxCxHxWx1 for masks NxCx1x1x2 for displacements. The sum is taken across C,2 then meaned across H,W
+  loss = torch.mean(torch.sum(torch.abs(masks.unsqueeze(-1) * displacements.unsqueeze(-2).unsqueeze(-2)), dim=(1,4)), dim=(1,2))
   if reduction is not None:
     return reduction(loss)
   else:
@@ -302,7 +309,7 @@ def visualize(model, im1, im2):
     return np.dot(rgb[...,:3], [0.2989, 0.5870, 0.1140])
 
   with torch.no_grad():
-    total_loss, photometric_loss, output, mask, flow, displacement = model(im1, im2)
+    total_loss, photometric_loss, output, mask, flow, displacement = model(im1, im2, reduction=None)
     output, mask, flow, displacement = output.cpu(), mask.cpu(), flow.cpu(), displacement.cpu()
     K = mask.shape[1]
 
@@ -325,7 +332,7 @@ def visualize(model, im1, im2):
 
 
     ax[2*b][1].imshow(vis_flow(flow[b]), interpolation='none', vmin=0., vmax=1.)
-    ax[2*b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b+B]:.8f})', wrap=True)
+    ax[2*b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b]:.8f})', wrap=True)
 
     for k in range(K):
       ax[2*b][2+k].imshow(rgb2gray(predsecond), interpolation='none', cmap='gray', vmin=0., vmax=1.)

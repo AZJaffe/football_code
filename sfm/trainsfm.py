@@ -66,7 +66,8 @@ def train_loop(*,
   dl_train,
   dl_validation=None,
   vis_point=None,
-  model,
+  train_model,
+  validation_model,
   optimizer,
   forwbackw_data_augmentation=False, # If this is True, the batch size will be twice the size of the batch of dl_train
   mask_logit_noise_curriculum=None,
@@ -83,19 +84,52 @@ def train_loop(*,
       return 0.
     return min(1., epoch/mask_logit_noise_curriculum)
 
-  def update_metrics(*, metrics, labels, output, displacement, mask, loss=None, recon_loss):
+  def finalize_metrics(metrics):
+    if using_ddp:
+      metrics = reduce_metrics(metrics)
+    if get_rank() == 0:
+      metrics = normalize_metrics(metrics)
+    return metrics
+
+  def reduce_metrics(metrics):
+    nonlocal device
+    t = torch.empty(len(metrics.keys()), device=device)
+    for i, v in enumerate(metrics.values()):
+      t[i] = v
+    dist.reduce(t, dst=0)
+    reduced = {}
+    for i, k in enumerate(metrics.keys()):
+      reduced[k] = t[i]
+    return reduced
+
+  def normalize_metrics(m):
+    for k,v in m.items():
+      if k == 'num_samples':
+        continue
+      m[k] = v / m['num_samples']
+    del m['num_samples']
+    return m
+
+  def update_metrics(metrics, *, labels, output, displacement, mask, loss=None, recon_loss):
+    N,K,H,W = mask.shape
+    metrics['num_samples'] += N
     if loss is not None:
       metrics['Loss/Total']       += loss
     metrics['Loss/Recon']         += recon_loss
     # metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-    metrics['Metric/DisplLength'] += torch.sum(torch.mean(torch.abs(displacement), dim=(1,2))) # L1 displacements
+    metrics['Metric/DisplLength'] += torch.mean(
+        torch.sum(
+          torch.abs(displacement * torch.tensor([W/2, H/2], device=device)),
+        dim=(0,2,)
+      ), 
+    ) # Mean over the # of objects in the scene
     # metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
       H,W = tuple(mask.shape[2:4])
-      N = ct.shape[0] # Need this in case using forwbackw and so batch size of displacement is 2*N
-      ae = torch.sum(torch.abs(displacement[0:N,0] * torch.tensor([W/2, H/2], device=device) - ct))
+      M = ct.shape[0] # Need this in case using forwbackw and so batch size of displacement is 2*M = N
+      ae = torch.sum(torch.abs(displacement[0:M,0] * torch.tensor([W/2, H/2], device=device) - ct)) * N / M
       metrics['Label/CameraDisplAE'] += ae
 
   def run_step(im1, im2, labels, metrics):
@@ -103,14 +137,14 @@ def train_loop(*,
     im1, im2 = im1.to(device), im2.to(device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
-    total_loss, recon_loss, output, mask, flow, displacement = model(im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
+    total_loss, recon_loss, output, mask, flow, displacement = train_model(im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
     log.DEBUG(f'After forward {step}:', memory_summary(device))
     total_loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
     optimizer.step()
 
     update_metrics(
-      metrics=metrics, 
+      metrics,
       loss=total_loss.item() * batch_size, 
       recon_loss=recon_loss.item() * batch_size,
       output=output, 
@@ -126,11 +160,9 @@ def train_loop(*,
       assert(len(dl.dataset) > 0)
       m = defaultdict(int)
       for im1, im2, labels in dl:
-        batch_size, C, H, W = im1.shape
+        N, C, H, W = im1.shape
         im1, im2 = im1.to(device), im2.to(device)
-        input = torch.cat((im1, im2), dim=1)
-        output, mask, flow, displacement = model(input)
-        recon_loss = sfmnet.dssim_loss(im2, output, reduction=torch.sum)
+        total_loss, recon_loss, output, mask, flow, displacement = validation_model(im1, im2, reduction=torch.sum)
 
         update_metrics(
           metrics=m,
@@ -142,50 +174,31 @@ def train_loop(*,
         )
 
     model.train()
-    for k,v in m.items():
-      m[k] = v / len(dl.dataset)
     return m
-
-  def reduce_metrics(metrics):
-    nonlocal device
-    t = torch.empty(len(metrics.keys()), device=device)
-    for i, v in enumerate(metrics.values()):
-      t[i] = v
-    dist.reduce(t, dst=0)
-    reduced = {}
-    for i, k in enumerate(metrics.keys()):
-      reduced[k] = t[i]
-    return reduced
-
+  
   step = 0
   for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
     if dl_validation is not None:
-      validation_metrics = run_validation(model, dl_validation)
+      validation_metrics = run_validation(validation_model, dl_validation)
+      validation_metrics = finalize_metrics(validation_metrics)
+
     train_metrics = defaultdict(int)
     for im1, im2, labels in dl_train:
       run_step(im1, im2, labels, train_metrics)
       step += 1
-    for k,v in train_metrics.items():
-      train_metrics[k] = v / len(dl_train.dataset)
-
-    if using_ddp:
-      if dl_validation is not None:
-        validation_metrics = reduce_metrics(validation_metrics)
-      train_metrics = reduce_metrics(train_metrics)
+    train_metrics = finalize_metrics(train_metrics)
 
     if dl_validation is not None:
       log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
     log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
 
     if checkpoint_file is not None and e % checkpoint_freq == 0:
-      save(checkpoint_file, model, optimizer, e)
+      save(checkpoint_file, train_model, optimizer, e)
 
     if using_ddp:
       dist.barrier()
-
-  return model
 
 def train(*,
   data_dir,
@@ -216,6 +229,7 @@ def train(*,
 
   using_ddp=False,
   debug=False,
+  returning=False,
 ):
   args = locals()
   assert(camera_translation == True)
@@ -223,17 +237,22 @@ def train(*,
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
   
+  ## sfm is the only model with parameters. The validation_model and train_model return the self-supervised
+  ## loss for training purposes.
+
   sfm = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
 
-  loss_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
+  validation_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
 
+  print('forwbackw is', forwbackw_reg_coeff)
   if forwbackw_reg_coeff is not 0.:
-    model = sfmnet.ForwBackwLoss(loss_model, forwbackw_reg_coeff)
+    print('Using forwbackw reg')
+    train_model = sfmnet.ForwBackwLoss(validation_model, forwbackw_reg_coeff)
   else:
-    model = loss_model
+    train_model = validation_model
 
   n_params = sfm.total_params()
   
@@ -305,9 +324,9 @@ def train(*,
         writer.add_scalar(prefix+k, v, step)
 
     if vis_point is not None and epoch % vis_freq == 0:
-      model.eval()
-      fig = sfmnet.visualize(loss_model, *vis_point)
-      model.train()
+      validation_model.eval()
+      fig = sfmnet.visualize(validation_model, *vis_point)
+      validation_model.train()
       if writer is not None:
         writer.add_figure(f'Visualization', fig, step)
       else:
@@ -316,7 +335,8 @@ def train(*,
 
   train_loop(
     device=device,
-    model=model,
+    validation_model=validation_model,
+    train_model=train_model,
     dl_train=dl_train,
     dl_validation=dl_validation,
     optimizer=optimizer,
@@ -341,7 +361,9 @@ def train(*,
     save(checkpoint_file, model, optimizer, num_epochs)
   if using_ddp:
     cleanup_dist()
-  return model
+
+  if returning:
+    return sfm
 
 
 def setup_dist():
