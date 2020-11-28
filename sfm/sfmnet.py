@@ -68,9 +68,13 @@ class ConvDecoder(torch.nn.Module):
     return masks
 
 
-class SpatialTransform(torch.nn.Module):
-  def __init__(self, *, C, H, W, max_batch_size=16):
-    super(SpatialTransform, self).__init__()
+
+
+class Flow2D(torch.nn.Module):
+  def __init__(self, *, C, H, W, camera_translation, max_batch_size=16):
+    super(Flow2D, self).__init__()
+    self.camera_translation = camera_translation
+    self.H, self.W = H, W
     identity_affine = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
     batched_identity = F.affine_grid( \
       # Need to batchify identitiy_affine_transform
@@ -80,10 +84,19 @@ class SpatialTransform(torch.nn.Module):
     )
     self.register_buffer('batched_identity', batched_identity)
   
-  def forward(self, im, flow):
-    B = im.shape[0]
+  def forward(self, *, im, displacements, masks):
+    B, K, _, _ = masks.shape
+    if self.camera_translation:
+      if K > 0:
+        flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+      else:
+        flow = torch.zeros((B,self.H,self.W,2), device=displacements.device)
+      flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
+    else:
+      flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
     grid = self.batched_identity[0:B] + flow
-    return F.grid_sample(im, grid, align_corners=False, padding_mode="zeros")
+    out = F.grid_sample(im, grid, align_corners=False, padding_mode="zeros")
+    return flow, out
 
 class SfMNet(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
@@ -106,7 +119,7 @@ class SfMNet(torch.nn.Module):
 
     self.encoder = ConvEncoder(H=H,W=W,im_channels=im_channels,C=C, conv_depth=conv_depth)
     self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K) if K is not 0 else None
-    self.spatial_transform = SpatialTransform(H=H,C=C,W=W)
+    self.flow_module = Flow2D(H=H,C=C,W=W, camera_translation=camera_translation)
 
     #####################
     #     FC Layers     #
@@ -151,18 +164,7 @@ class SfMNet(torch.nn.Module):
         xs = fc(xs)
     displacements = xs.reshape((batch_size, self.K + self.camera_translation, 2))
 
-    # Reshape displacements and masks so they can be broadcast
-    if self.camera_translation:
-      if self.K > 0:
-        flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-      else:
-        flow = torch.zeros((batch_size,self.H,self.W,2), device=displacements.device)
-      flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
-    else:
-      flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-    # flow has size (batch_size, H, W, 2)
-
-    out = self.spatial_transform(input[:,0:self.im_channels], flow)
+    flow, out = self.flow_module(im=input[:,0:self.im_channels], displacements=displacements, masks=masks)
     
     return out, masks, flow, displacements
   
