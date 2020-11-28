@@ -98,7 +98,7 @@ class Flow2D(torch.nn.Module):
     out = F.grid_sample(im, grid, align_corners=False, padding_mode="zeros")
     return flow, out
 
-class SfMNet(torch.nn.Module):
+class SfMNet2D(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
 
   The 6 input channels come from two 3 channel images concatenated
@@ -108,7 +108,7 @@ class SfMNet(torch.nn.Module):
   """
   def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32], camera_translation=False):
     """ fc_layer_spec is the number of fully connected layers BEFORE the output layer """
-    super(SfMNet, self).__init__()
+    super(SfMNet2D, self).__init__()
     self.conv_depth = conv_depth
     self.H, self.W, self.K, self.C = H,W,K,C
     self.im_channels = im_channels

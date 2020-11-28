@@ -69,7 +69,6 @@ def train_loop(*,
   train_model,
   validation_model,
   optimizer,
-  forwbackw_data_augmentation=False, # If this is True, the batch size will be twice the size of the batch of dl_train
   mask_logit_noise_curriculum=None,
   num_epochs=1,
   start_at_epoch=0,
@@ -232,7 +231,6 @@ def train(*,
   returning=False,
 ):
   args = locals()
-  assert(camera_translation == True)
   
   ds=PairConsecutiveFramesDataset(data_dir)
   im_channels, H, W = ds[0][0].shape
@@ -240,16 +238,14 @@ def train(*,
   ## sfm is the only model with parameters. The validation_model and train_model return the self-supervised
   ## loss for training purposes.
 
-  sfm = sfmnet.SfMNet(H=H, W=W, im_channels=im_channels, \
+  sfm = sfmnet.SfMNet2D(H=H, W=W, im_channels=im_channels, \
     C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
     hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
   )
 
   validation_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
 
-  print('forwbackw is', forwbackw_reg_coeff)
   if forwbackw_reg_coeff is not 0.:
-    print('Using forwbackw reg')
     train_model = sfmnet.ForwBackwLoss(validation_model, forwbackw_reg_coeff)
   else:
     train_model = validation_model
