@@ -67,24 +67,6 @@ class ConvDecoder(torch.nn.Module):
     masks = torch.sigmoid(logits + noise)
     return masks
 
-class Flow2D(torch.nn.Module):
-  def __init__(self, *, C, H, W, camera_translation, max_batch_size=16):
-    super(Flow2D, self).__init__()
-    self.camera_translation = camera_translation
-    self.H, self.W = H, W
-  
-  def forward(self, *, im, displacements, masks):
-    B, K, _, _ = masks.shape
-    if self.camera_translation:
-      if K > 0:
-        flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-      else:
-        flow = torch.zeros((B,self.H,self.W,2), device=displacements.device)
-      flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
-    else:
-      flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-    return flow
-
 class SfMNet2D(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
 
@@ -156,6 +138,23 @@ class SfMNet2D(torch.nn.Module):
     return masks, flow, displacements
   
 
+class Flow2D(torch.nn.Module):
+  def __init__(self, *, C, H, W, camera_translation, max_batch_size=16):
+    super(Flow2D, self).__init__()
+    self.camera_translation = camera_translation
+    self.H, self.W = H, W
+  
+  def forward(self, *, im, displacements, masks):
+    B, K, _, _ = masks.shape
+    if self.camera_translation:
+      if K > 0:
+        flow = torch.sum(displacements[:,1:].unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+      else:
+        flow = torch.zeros((B,self.H,self.W,2), device=displacements.device)
+      flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
+    else:
+      flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
+    return flow
 
 class Flow3D(torch.nn.Module):
   def __init__(self, *, C, H, W, max_batch_size=16):
