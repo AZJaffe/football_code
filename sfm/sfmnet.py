@@ -67,22 +67,11 @@ class ConvDecoder(torch.nn.Module):
     masks = torch.sigmoid(logits + noise)
     return masks
 
-
-
-
 class Flow2D(torch.nn.Module):
   def __init__(self, *, C, H, W, camera_translation, max_batch_size=16):
     super(Flow2D, self).__init__()
     self.camera_translation = camera_translation
     self.H, self.W = H, W
-    identity_affine = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
-    batched_identity = F.affine_grid( \
-      # Need to batchify identitiy_affine_transform
-      identity_affine.unsqueeze(0).repeat(max_batch_size, 1, 1), \
-      (max_batch_size, C, H, W), \
-      align_corners=False
-    )
-    self.register_buffer('batched_identity', batched_identity)
   
   def forward(self, *, im, displacements, masks):
     B, K, _, _ = masks.shape
@@ -94,9 +83,7 @@ class Flow2D(torch.nn.Module):
       flow = flow + displacements[:,0].unsqueeze(-2).unsqueeze(-2)
     else:
       flow = torch.sum(displacements.unsqueeze(-2).unsqueeze(-2) * masks.unsqueeze(-1), dim=1)
-    grid = self.batched_identity[0:B] + flow
-    out = F.grid_sample(im, grid, align_corners=False, padding_mode="zeros")
-    return flow, out
+    return flow
 
 class SfMNet2D(torch.nn.Module):
   """ SfMNet is a motion detected based off a paper
@@ -164,19 +151,28 @@ class SfMNet2D(torch.nn.Module):
         xs = fc(xs)
     displacements = xs.reshape((batch_size, self.K + self.camera_translation, 2))
 
-    flow, out = self.flow_module(im=input[:,0:self.im_channels], displacements=displacements, masks=masks)
+    flow = self.flow_module(im=input[:,0:self.im_channels], displacements=displacements, masks=masks)
     
-    return out, masks, flow, displacements
+    return masks, flow, displacements
   
 
 class LossModule(torch.nn.Module):
 
-  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0.):
+  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0., max_batch_size=16):
     super(LossModule, self).__init__()
     self.sfm_model = sfm_model
+    self.C, self.H, self.W = sfm_model.im_channels, sfm_model.H, sfm_model.W
     self.dssim_coeff = dssim_coeff
     self.l1_photometric_coeff = l1_photometric_coeff
     self.l1_flow_reg_coeff = l1_flow_reg_coeff
+    identity_affine = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
+    batched_identity = F.affine_grid( \
+      # Need to batchify identitiy_affine_transform
+      identity_affine.unsqueeze(0).repeat(max_batch_size, 1, 1), \
+      (max_batch_size, self.C, self.H, self.W), \
+      align_corners=False
+    )
+    self.register_buffer('batched_identity', batched_identity)
 
   def forward(self, im1, im2, mask_logit_noise_var=0., reduction=torch.mean):
     """ Returns the loss for the model 
@@ -186,16 +182,20 @@ class LossModule(torch.nn.Module):
       reduction: either 'mean' or None. 'mean' will return a scalar of the mean loss over the batch,
       while None will return the loss for each element of the batch.
     """
-    
+    B = im1.shape[0]
     inp = torch.cat((im1, im2), dim=1)
-    out, mask, flow, displacement = self.sfm_model(inp, mask_logit_noise_var)
-    dssim = dssim_loss(out, im2, reduction=reduction) if self.dssim_coeff is not 0. else 0.
-    l1_photometric = l1_photometric_loss(out, im2, reduction=reduction) if l1_photometric_loss is not 0. else 0.
+    mask, flow, displacement = self.sfm_model(inp, mask_logit_noise_var)
+
+    grid = self.batched_identity[0:B] + flow
+    im2_estimate = F.grid_sample(im1, grid, align_corners=False, padding_mode="zeros")
+
+    dssim = dssim_loss(im2_estimate, im2, reduction=reduction) if self.dssim_coeff is not 0. else 0.
+    l1_photometric = l1_photometric_loss(im2_estimate, im2, reduction=reduction) if l1_photometric_loss is not 0. else 0.
     flow_reg_loss = l1_flow_regularization(mask, displacement, reduction=reduction) if self.l1_flow_reg_coeff is not 0. else 0.
 
     photometric_loss = self.dssim_coeff * dssim + self.l1_photometric_coeff * l1_photometric
     total_loss =  self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss
-    return total_loss, photometric_loss, out, mask, flow, displacement
+    return total_loss, photometric_loss, im2_estimate, mask, flow, displacement
 
 
 class ForwBackwLoss(torch.nn.Module):
