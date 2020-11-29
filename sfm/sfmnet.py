@@ -82,10 +82,6 @@ class SfMNet2D(torch.nn.Module):
     self.H, self.W, self.K, self.C = H,W,K,C
     self.im_channels = im_channels
     self.camera_translation = camera_translation # whether or not to include camera_translation
-    # 2d affine transform
-    self.register_buffer('identity_affine_transform', \
-      torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32))
-
     self.encoder = ConvEncoder(H=H,W=W,im_channels=im_channels,C=C, conv_depth=conv_depth)
     self.decoder = ConvDecoder(C=C, conv_depth=conv_depth, K=K) if K is not 0 else None
     self.flow_module = Flow2D(H=H,C=C,W=W, camera_translation=camera_translation)
@@ -136,7 +132,6 @@ class SfMNet2D(torch.nn.Module):
     flow = self.flow_module(im=input[:,0:self.im_channels], displacements=displacements, masks=masks)
     
     return masks, flow, displacements
-  
 
 class Flow2D(torch.nn.Module):
   def __init__(self, *, C, H, W, camera_translation, max_batch_size=16):
@@ -158,7 +153,7 @@ class Flow2D(torch.nn.Module):
 
 class Flow3D(torch.nn.Module):
   def __init__(self, *, C, H, W, max_batch_size=16):
-    super(SpatialTransform3D, self).__init__()
+    super(Flow3D, self).__init__()
     identity_affine = torch.tensor([[1,0,0],[0,1,0]], dtype=torch.float32)
     pixel_locations = F.affine_grid( \
       # Need to batchify identitiy_affine_transform
@@ -342,7 +337,6 @@ class LossModule(torch.nn.Module):
     photometric_loss = self.dssim_coeff * dssim + self.l1_photometric_coeff * l1_photometric
     total_loss =  self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss
     return total_loss, photometric_loss, im2_estimate, mask, flow, displacement
-
 
 class ForwBackwLoss(torch.nn.Module):
   def __init__(self, loss_module, forwbackw_coeff):
