@@ -31,8 +31,8 @@ class ConvEncoder(torch.nn.Module):
     xs = input
     # Compute the embedding using the encoder convolutional layers
     encodings = []
-    for i, (conv, bn) in enumerate(zip(self.conv_encode, self.bns_encode)):
-      if i % 2 == 1:
+    for conv, bn in zip(self.conv_encode, self.bns_encode):
+      if conv.stride[0] == 2:
         encodings.append(xs)
       xs = F.relu(bn(conv(xs)))
 
