@@ -21,63 +21,71 @@ from pair_frames_dataset import PairConsecutiveFramesDataset
 
 log = logger.noop
 
+
 def get_rank():
   return dist.get_rank() if dist.is_initialized() else 0
+
 
 def load(checkpoint_file, model, optimizer):
   # Returns the epoch number to start at, as well as loads the optimizer and model
   if checkpoint_file is None:
     return
   try:
-    map_location = {'cuda:0': f'cuda:{get_rank()}' if torch.cuda.is_available() else 'cpu'} 
+    map_location = {
+      'cuda:0': f'cuda:{get_rank()}' if torch.cuda.is_available() else 'cpu'}
     checkpoint = torch.load(checkpoint_file, map_location)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    log.INFO(f'RANK {get_rank()}: Loaded from checkpoint at {checkpoint_file}')
+    log.INFO(
+      f'RANK {get_rank()}: Loaded from checkpoint at {checkpoint_file}')
     if 'epoch' in checkpoint:
       return checkpoint['epoch']
     else:
-      return 0  
+      return 0
   except FileNotFoundError:
     return 0
 
+
 def save(checkpoint_file, model, optimizer, epoch):
-  if get_rank() is not 0:
+  if get_rank() != 0:
     return
   if checkpoint_file is None:
     return
   tmp_file = checkpoint_file + '.tmp'
   torch.save({
-      'model_state_dict': model.state_dict(),
-      'optimizer_state_dict': optimizer.state_dict(),
-      'epoch': epoch
-    }, tmp_file)
+    'model_state_dict': model.state_dict(),
+    'optimizer_state_dict': optimizer.state_dict(),
+    'epoch': epoch
+  }, tmp_file)
   os.replace(tmp_file, checkpoint_file)
   log.INFO(f'Checkpoint saved at {checkpoint_file}')
+
 
 def memory_summary(device):
   return torch.cuda.memory_summary(device) if torch.cuda.is_available() else 'NO CUDA DEVICE'
 
+
 def noop_callback(*a, **k):
   pass
 
+
 def train_loop(*,
-  device,
-  dl_train,
-  dl_validation=None,
-  vis_point=None,
-  train_model,
-  validation_model,
-  optimizer,
-  mask_logit_noise_curriculum=None,
-  num_epochs=1,
-  start_at_epoch=0,
-  log_metrics=noop_callback,
-  using_ddp=False,
-  checkpoint_file=None,
-  checkpoint_freq=None,
-):
-  
+         device,
+         dl_train,
+         dl_validation=None,
+         vis_point=None,
+         train_model,
+         validation_model,
+         optimizer,
+         mask_logit_noise_curriculum=None,
+         num_epochs=1,
+         start_at_epoch=0,
+         log_metrics=noop_callback,
+         using_ddp=False,
+         checkpoint_file=None,
+         checkpoint_freq=None,
+         ):
+
   def get_mask_logit_noise(epoch):
     if mask_logit_noise_curriculum is None:
       return 0.
@@ -102,7 +110,7 @@ def train_loop(*,
     return reduced
 
   def normalize_metrics(m):
-    for k,v in m.items():
+    for k, v in m.items():
       if k == 'num_samples':
         continue
       m[k] = v / m['num_samples']
@@ -110,25 +118,27 @@ def train_loop(*,
     return m
 
   def update_metrics(metrics, *, labels, output, displacement, mask, loss=None, recon_loss):
-    N,K,H,W = mask.shape
+    N, K, H, W = mask.shape
     metrics['num_samples'] += N
     if loss is not None:
-      metrics['Loss/Total']       += loss
-    metrics['Loss/Recon']         += recon_loss
-    # metrics['Metric/MaskMass']    += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
-    metrics['Metric/DisplLength'] += torch.mean(
-        torch.sum(
-          torch.abs(displacement * torch.tensor([W/2, H/2], device=device)),
-        dim=(0,2,)
-      ), 
-    ) # Mean over the # of objects in the scene
-    # metrics['Metric/MaskVar']     += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
+      metrics['Loss/Total'] += loss
+    metrics['Loss/Recon'] += recon_loss
+    # metrics['Metric/MaskMass']  += torch.sum(torch.mean(mask, dim=(1,))) # Mask mass
+    # metrics['Metric/DisplLength'] += torch.mean(
+    #   torch.sum(
+    #     torch.abs(displacement * torch.tensor([W/2, H/2] if displacement.shape[-1] == 2 else displacement, device=device)),
+    #   dim=(0,2,)
+    #   ),
+    # ) # Mean over the # of objects in the scene
+    # metrics['Metric/MaskVar']   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
     if 'camera_translation' in labels:
       ct = labels['camera_translation'].to(device)
-      H,W = tuple(mask.shape[2:4])
-      M = ct.shape[0] # Need this in case using forwbackw and so batch size of displacement is 2*M = N
-      ae = torch.sum(torch.abs(displacement[0:M,0] * torch.tensor([W/2, H/2], device=device) - ct)) * N / M
+      H, W = tuple(mask.shape[2:4])
+      # Need this in case using forwbackw and so batch size of displacement is 2*M = N
+      M = ct.shape[0]
+      ae = torch.sum(torch.abs(
+        displacement[0:M, 0] * torch.tensor([W/2, H/2], device=device) - ct)) * N / M
       metrics['Label/CameraDisplAE'] += ae
 
   def run_step(im1, im2, labels, metrics):
@@ -136,7 +146,8 @@ def train_loop(*,
     im1, im2 = im1.to(device), im2.to(device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
-    total_loss, recon_loss, output, mask, flow, displacement = train_model(im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
+    total_loss, recon_loss, output, mask, flow, displacement = train_model(
+      im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
     log.DEBUG(f'After forward {step}:', memory_summary(device))
     total_loss.backward()
     log.DEBUG(f'After backward {step}:', memory_summary(device))
@@ -144,12 +155,12 @@ def train_loop(*,
 
     update_metrics(
       metrics,
-      loss=total_loss.item() * batch_size, 
+      loss=total_loss.item() * batch_size,
       recon_loss=recon_loss.item() * batch_size,
-      output=output, 
-      labels=labels, 
-      displacement=displacement, 
-      mask=mask, 
+      output=output,
+      labels=labels,
+      displacement=displacement,
+      mask=mask,
     )
 
   def run_validation(model, dl):
@@ -161,7 +172,8 @@ def train_loop(*,
       for im1, im2, labels in dl:
         N, C, H, W = im1.shape
         im1, im2 = im1.to(device), im2.to(device)
-        total_loss, recon_loss, output, mask, flow, displacement = validation_model(im1, im2, reduction=torch.sum)
+        total_loss, recon_loss, output, mask, flow, displacement = validation_model(
+          im1, im2, reduction=torch.sum)
 
         update_metrics(
           metrics=m,
@@ -174,13 +186,14 @@ def train_loop(*,
 
     model.train()
     return m
-  
+
   step = 0
   for e in range(start_at_epoch, num_epochs):
     if isinstance(dl_train.sampler, torch.utils.data.DistributedSampler):
       dl_train.sampler.set_epoch(e)
     if dl_validation is not None:
-      validation_metrics = run_validation(validation_model, dl_validation)
+      validation_metrics = run_validation(
+        validation_model, dl_validation)
       validation_metrics = finalize_metrics(validation_metrics)
 
     train_metrics = defaultdict(int)
@@ -190,7 +203,8 @@ def train_loop(*,
     train_metrics = finalize_metrics(train_metrics)
 
     if dl_validation is not None:
-      log_metrics(epoch=e, step=step, metric=validation_metrics, prefix='Validation/')
+      log_metrics(epoch=e, step=step,
+            metric=validation_metrics, prefix='Validation/')
     log_metrics(epoch=e, step=step, metric=train_metrics, prefix='Train/')
 
     if checkpoint_file is not None and e % checkpoint_freq == 0:
@@ -199,59 +213,62 @@ def train_loop(*,
     if using_ddp:
       dist.barrier()
 
+
 def train(*,
-  data_dir,
-  sliding_data=True,
-  tensorboard_dir=None,
-  checkpoint_file=None,
-  checkpoint_freq=10,
-  dl_num_workers=6,
-  validation_split=0.1,
-  seed=42,
+      data_dir,
+      sliding_data=True,
+      tensorboard_dir=None,
+      checkpoint_file=None,
+      checkpoint_freq=10,
+      dl_num_workers=6,
+      validation_split=0.1,
+      seed=42,
 
-  K=1,
-  camera_translation=False,
-  C=16,
-  fc_layer_width=128,
-  num_hidden_layers=1,
-  conv_depth=2,
-  flowreg_coeff=0.,
-  forwbackw_reg_coeff=0.,
+      K=1,
+      camera_translation=False,
+      C=16,
+      fc_layer_width=128,
+      num_hidden_layers=1,
+      conv_depth=2,
+      flowreg_coeff=0.,
+      forwbackw_reg_coeff=0.,
 
-  lr=0.001,
-  mask_logit_noise_curriculum=None,
-  batch_size=16,
+      lr=0.001,
+      mask_logit_noise_curriculum=None,
+      batch_size=16,
 
-  num_epochs=1, 
-  n_vis_point=None,
-  vis_freq=50,
+      num_epochs=1,
+      n_vis_point=None,
+      vis_freq=50,
 
-  using_ddp=False,
-  debug=False,
-  returning=False,
-):
+      using_ddp=False,
+      debug=False,
+      returning=False,
+      ):
   args = locals()
-  
-  ds=PairConsecutiveFramesDataset(data_dir)
-  im_channels, H, W = ds[0][0].shape
-  
-  ## sfm is the only model with parameters. The validation_model and train_model return the self-supervised
-  ## loss for training purposes.
 
-  sfm = sfmnet.SfMNet2D(H=H, W=W, im_channels=im_channels, \
-    C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth, \
-    hidden_layer_widths=[fc_layer_width]*num_hidden_layers \
-  )
+  ds = PairConsecutiveFramesDataset(data_dir)
+  im_channels, H, W = ds[0][0].shape
+
+  # sfm is the only model with parameters. The validation_model and train_model return the self-supervised
+  # loss for training purposes.
+
+  sfm = sfmnet.SfMNet3D(H=H, W=W, im_channels=im_channels,
+              C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth,
+              hidden_layer_widths=[
+                fc_layer_width]*num_hidden_layers
+              )
 
   validation_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
 
-  if forwbackw_reg_coeff is not 0.:
-    train_model = sfmnet.ForwBackwLoss(validation_model, forwbackw_reg_coeff)
+  if forwbackw_reg_coeff != 0.:
+    train_model = sfmnet.ForwBackwLoss(
+      validation_model, forwbackw_reg_coeff)
   else:
     train_model = validation_model
 
   n_params = sfm.total_params()
-  
+
   if using_ddp:
     setup_dist()
     device = torch.device('cuda', 0)
@@ -280,15 +297,18 @@ def train(*,
   n_validation = int(len(ds) * validation_split)
   n_train = len(ds) - n_validation
   log.DEBUG(f'Validation size {n_validation}, train size {n_train}')
-  ds_train, ds_validation = torch.utils.data.random_split(ds, [n_train, n_validation], generator=torch.Generator().manual_seed(seed))
+  ds_train, ds_validation = torch.utils.data.random_split(
+    ds, [n_train, n_validation], generator=torch.Generator().manual_seed(seed))
 
-  sampler_train = torch.utils.data.DistributedSampler(ds_train) if using_ddp else None
-  sampler_validation = torch.utils.data.DistributedSampler(ds_validation, shuffle=False) if using_ddp else None
-  dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size, 
-    shuffle=(sampler_train is None), sampler=sampler_train, num_workers=dl_num_workers, pin_memory=True)
+  sampler_train = torch.utils.data.DistributedSampler(
+    ds_train) if using_ddp else None
+  sampler_validation = torch.utils.data.DistributedSampler(
+    ds_validation, shuffle=False) if using_ddp else None
+  dl_train = torch.utils.data.DataLoader(ds_train, batch_size=batch_size,
+                       shuffle=(sampler_train is None), sampler=sampler_train, num_workers=dl_num_workers, pin_memory=True)
 
-  dl_validation = torch.utils.data.DataLoader(ds_validation, sampler=sampler_validation, 
-    batch_size=batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
+  dl_validation = torch.utils.data.DataLoader(ds_validation, sampler=sampler_validation,
+                        batch_size=batch_size, shuffle=False, num_workers=dl_num_workers, pin_memory=True)
 
   if tensorboard_dir is not None and rank is 0:
     writer = SummaryWriter(log_dir=tensorboard_dir)
@@ -304,19 +324,21 @@ def train(*,
 
   best_validation = math.inf
   start_time = time.monotonic()
+
   def log_metrics(*, step, epoch, metric, prefix=''):
     nonlocal best_validation
     nonlocal start_time
     nonlocal rank
-    if rank is not 0:
+    if rank != 0:
       return
-    best_validation = min(best_validation, metric.get('Loss/Validation/Recon', math.inf))
+    best_validation = min(best_validation, metric.get(
+      'Loss/Validation/Recon', math.inf))
     s = f'epoch: {epoch} step: {step} time_elapsed: {time.monotonic() - start_time:.2f}s '
-    for k,v in metric.items():
+    for k, v in metric.items():
       s += f'{prefix}{k}: {v:7f} '
     log.INFO(s)
     if writer is not None:
-      for k,v in metric.items():
+      for k, v in metric.items():
         writer.add_scalar(prefix+k, v, step)
 
     if vis_point is not None and epoch % vis_freq == 0:
@@ -327,7 +349,7 @@ def train(*,
         writer.add_figure(f'Visualization', fig, step)
       else:
         pass
-        #plt.show()
+        # plt.show()
 
   train_loop(
     device=device,
@@ -347,9 +369,9 @@ def train(*,
 
   if writer is not None:
     writer.add_hparams({
-      'lr':lr,
+      'lr': lr,
       'flowreg': flowreg_coeff,
-    },{
+    }, {
       'Validation/Recon': best_validation
     })
 
@@ -365,19 +387,21 @@ def train(*,
 def setup_dist():
   assert not torch.cuda.is_available or torch.cuda.device_count() == 1
   env_dict = {
-        key: os.environ[key]
-        for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
+    key: os.environ[key]
+    for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "WORLD_SIZE")
   }
   print(f"[{os.getpid()}] Initializing process group with: {env_dict}")
-  dist.init_process_group(backend="nccl" if torch.cuda.is_available() else 'gloo', init_method='env://')
+  dist.init_process_group(
+    backend="nccl" if torch.cuda.is_available() else 'gloo', init_method='env://')
   print(
-      f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
-      + f"rank = {get_rank()}, backend={dist.get_backend()}"
+    f"[{os.getpid()}] world_size = {dist.get_world_size()}, "
+    + f"rank = {get_rank()}, backend={dist.get_backend()}"
   )
 
-def cleanup_dist():
-    dist.destroy_process_group()
 
-if __name__=='__main__':
+def cleanup_dist():
+  dist.destroy_process_group()
+
+
+if __name__ == '__main__':
   fire.Fire(train)
-  
