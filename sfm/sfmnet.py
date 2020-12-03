@@ -17,7 +17,7 @@ class ConvEncoder(torch.nn.Module):
     self.conv_depth = conv_depth
 
     conv_encode = nn.ModuleList(
-      [nn.Conv2d(im_channels*2, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
+      [nn.Conv2d(im_channels, self.C, kernel_size=3, stride=1, padding=1, bias=False)])
     bns_encode = nn.ModuleList([nn.BatchNorm2d(self.C)])
     for i in range(self.conv_depth):
       in_channels = self.C * (2 ** i)
@@ -88,7 +88,7 @@ class SfMNet2D(torch.nn.Module):
     # whether or not to include camera_translation
     self.camera_translation = camera_translation
     self.encoder = ConvEncoder(
-      H=H, W=W, im_channels=im_channels, C=C, conv_depth=conv_depth)
+      H=H, W=W, im_channels=im_channels*2, C=C, conv_depth=conv_depth)
     self.decoder = ConvDecoder(
       C=C, conv_depth=conv_depth, K=K) if K != 0 else None
     self.flow_module = Flow2D(
@@ -149,7 +149,11 @@ class SfMNet2D(torch.nn.Module):
     flow = self.flow_module(
       im=input[:, 0:self.im_channels], displacements=displacements, masks=masks)
 
-    return masks, flow, displacements
+    return { 
+      'mask': masks,
+      'flow': flow,
+      'displacement': displacements
+    }
 
 
 class Flow2D(torch.nn.Module):
@@ -183,16 +187,14 @@ class SfMNet3D(torch.nn.Module):
   H and W must be divisible by 2**conv_depth
   """
 
-  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32], camera_translation=False):
+  def __init__(self, *, H, W, im_channels=3, K=1, C=16, conv_depth=2, hidden_layer_widths=[32]):
     super(SfMNet3D, self).__init__()
     self.conv_depth = conv_depth
     self.H, self.W, self.K, self.C = H, W, K, C
     self.im_channels = im_channels
-    # whether or not to include camera_translation
-    self.camera_translation = camera_translation
 
     self.motion_encoder = ConvEncoder(
-      H=H, W=W, im_channels=im_channels, C=C, conv_depth=conv_depth)
+      H=H, W=W, im_channels=im_channels*2, C=C, conv_depth=conv_depth)
     self.motion_decoder = ConvDecoder(
       C=C, conv_depth=conv_depth, K=K) if K != 0 else None
     self.depth_encoder = ConvEncoder(
@@ -245,17 +247,25 @@ class SfMNet3D(torch.nn.Module):
         xs = F.relu(fc(xs))
       else:
         xs = fc(xs)
-    displacements = xs.reshape((batch_size, 6*self.K + 9))
+    tranform_params = xs.reshape((batch_size, 6*self.K + 9))
 
-    T = displacements[:, 0:6*self.K]
-    Tc = displacements[:, 0:-9]
+    print(tranform_params.shape)
+
     depth_embedding, depth_encodings = self.depth_encoder(input[:, 0:3])
     depth = self.depth_decoder(depth_embedding, depth_encodings)
     depth = self.depth_conv(depth).reshape((batch_size, self.H, self.W))
 
+    T = tranform_params[:, 0:6*self.K].reshape((batch_size,self.K,6))
+    Tc = tranform_params[:, 6*self.K:]
     flow = self.flow_module(mask=masks, T=T, Tc=Tc, depth=depth)
 
-    return masks, flow, displacements
+    return {
+      'mask': masks, 
+      'flow': flow,
+      'depth': depth,
+      'obj_transform': T,
+      'cam_transform': Tc,
+    }
 
 
 class Flow3D(torch.nn.Module):
@@ -383,6 +393,10 @@ class Flow3D(torch.nn.Module):
     '''
     B, K, H, W = mask.shape
 
+    assert depth.shape == (B,H,W), f'depth has shape {depth.shape}'
+    assert(T.shape == (B,K,6)), f'T has shape {T.shape}'
+    assert(Tc.shape == (B,9)), f'Tc has shape {Tc.shape}'
+
     t, a = T[..., 0:3*K], T[..., 3*K:6*K]
     R = self.euler2mat(a.reshape((B*K, 3)))
     R = R.reshape((B, K, 3, 3))  # BxKx3x3
@@ -415,13 +429,24 @@ class Flow3D(torch.nn.Module):
 
 class LossModule(torch.nn.Module):
 
-  def __init__(self, sfm_model, dssim_coeff=1., l1_photometric_coeff=0., l1_flow_reg_coeff=0., max_batch_size=16):
+  def __init__(self, *, sfm_model, 
+    dssim_coeff=1., 
+    l1_photometric_coeff=0., 
+    l1_flow_reg_coeff=0.,
+    depth_smooth_reg=0.,
+    flow_smooth_reg=0.,
+    mask_smooth_reg=0., 
+    max_batch_size=16
+  ):
     super(LossModule, self).__init__()
     self.sfm_model = sfm_model
     self.C, self.H, self.W = sfm_model.im_channels, sfm_model.H, sfm_model.W
     self.dssim_coeff = dssim_coeff
     self.l1_photometric_coeff = l1_photometric_coeff
     self.l1_flow_reg_coeff = l1_flow_reg_coeff
+    self.depth_smooth_reg = depth_smooth_reg
+    self.flow_smooth_reg = flow_smooth_reg
+    self.mask_smooth_reg = mask_smooth_reg
     identity_affine = torch.tensor(
       [[1, 0, 0], [0, 1, 0]], dtype=torch.float32)
     batched_identity = F.affine_grid( \
@@ -442,7 +467,8 @@ class LossModule(torch.nn.Module):
     """
     B = im1.shape[0]
     inp = torch.cat((im1, im2), dim=1)
-    mask, flow, displacement = self.sfm_model(inp, mask_logit_noise_var)
+    out = self.sfm_model(inp, mask_logit_noise_var)
+    mask, flow, displacement, depth = out.get('mask'), out.get('flow'), out.get('displacement'), out.get('depth')
 
     grid = self.batched_identity[0:B] + flow
     im2_estimate = F.grid_sample(
@@ -457,8 +483,13 @@ class LossModule(torch.nn.Module):
 
     photometric_loss = self.dssim_coeff * dssim + \
       self.l1_photometric_coeff * l1_photometric
-    total_loss = self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss
-    return total_loss, photometric_loss, im2_estimate, mask, flow, displacement
+
+    smooth_reg = edge_aware_smoothness_reg(im=im2, mask=mask, flow=flow, depth=depth,
+      depth_coeff=self.depth_smooth_reg, mask_coeff=self.mask_smooth_reg, flow_coeff=self.flow_smooth_reg) if isinstance(self.sfm_model, SfMNet3D) else 0
+      
+
+    total_loss = self.l1_flow_reg_coeff * flow_reg_loss + photometric_loss + smooth_reg
+    return total_loss, photometric_loss, im2_estimate, out
 
 
 class ForwBackwLoss(torch.nn.Module):
@@ -473,14 +504,15 @@ class ForwBackwLoss(torch.nn.Module):
 
     forw = torch.cat((im1, im2), dim=0)
     backw = torch.cat((im2, im1), dim=0)
-    total_loss, photometric_loss, out, mask, flow, displacement = self.loss_module(
+    total_loss, photometric_loss, im2_estimate, out = self.loss_module(
       forw, backw, mask_logit_noise_var, reduction=reduction)
 
+    displacement = out['displacement']
     forwbackw_loss = forwbackw_displacement_loss(
       displacement[0:N], displacement[N:2*N], reduction=reduction)
     total_loss += self.forwbackw_coeff * forwbackw_loss
     # Note that out, mask, flow, displacement will have batch size 2*N !
-    return total_loss, photometric_loss, out, mask, flow, displacement
+    return total_loss, photometric_loss, im2_estimate, out
 
 
 def forwbackw_displacement_loss(forwdispl, backwdispl, reduction=torch.mean):
@@ -490,6 +522,39 @@ def forwbackw_displacement_loss(forwdispl, backwdispl, reduction=torch.mean):
   else:
     return loss
 
+
+def edge_aware_smoothness_reg(*, im, depth, flow, mask, depth_coeff=0., flow_coeff=0., mask_coeff=0.):
+    """ Computes the total optical flow, depth, and mask edge-aware regualizer.
+    The 2nd order derivates of depth are penalized
+    Parameters:
+    -----------
+    im: the batch of images (BxCxHxW)
+    depth: depth values (BxHxW)
+    flow: flow values (BxHxWx2)
+    mask: mask values (BxKxHxW)
+
+    Output:
+    -------
+    Regularizer, scalar
+    """
+    B,C,H,W = im.shape
+    K = mask.shape[1]
+    assert depth.shape == (B,H,W), f'depth is wrong shape {depth.shape}'
+    assert flow.shape == (B,H,W,2), f'flow is wrong shape {flow.shape}'
+    assert mask.shape == (B,K,H,W), f'mask is wrong shape {mask.shape}'
+    d_im = kornia.sobel(im) # BxCxHxW
+    norm_d_im = torch.norm(d_im, p=1, dim=1) # BxHxW
+    exp_norm = torch.exp(-norm_d_im) # BxHxW
+
+    d_flow = kornia.sobel(flow) # BxHxWx2
+    flow_smooth_reg = torch.mean(exp_norm * torch.norm(flow, p=1, dim=-1))
+
+    lap_depth = kornia.laplacian(depth.unsqueeze(1), kernel_size=3)
+    depth_smooth_reg = torch.mean(exp_norm * lap_depth)
+
+    d_mask = kornia.sobel(mask)
+    mask_smooth_reg = torch.mean(exp_norm * torch.norm(d_mask, p=1, dim=1))
+    return flow_coeff * flow_smooth_reg + depth_coeff * depth_smooth_reg + mask_coeff * mask_smooth_reg
 
 def l1_photometric_loss(p, q, reduction=torch.mean):
   """ Computes the mean L1 reconstructions loss of a batch
@@ -586,10 +651,10 @@ def visualize(model, im1, im2):
     return np.dot(rgb[..., :3], [0.2989, 0.5870, 0.1140])
 
   with torch.no_grad():
-    total_loss, photometric_loss, output, mask, flow, displacement = model(
+    total_loss, photometric_loss, im2_estimate, out = model(
       im1, im2, reduction=None)
-    output, mask, flow, displacement = output.cpu(
-    ), mask.cpu(), flow.cpu(), displacement.cpu()
+      
+    output, mask, flow, displacement = im2_estimate.cpu(), out['mask'].cpu(), out['flow'].cpu(), out['displacement'].cpu()
     K = mask.shape[1]
 
   im1_cpu = im1.cpu()
@@ -612,8 +677,7 @@ def visualize(model, im1, im2):
 
     ax[2*b][1].imshow(vis_flow(flow[b]),
               interpolation='none', vmin=0., vmax=1.)
-    ax[2 *
-      b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b]:.8f})', wrap=True)
+    ax[2*b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b]:.8f})', wrap=True)
 
     for k in range(K):
       ax[2*b][2+k].imshow(rgb2gray(predsecond),

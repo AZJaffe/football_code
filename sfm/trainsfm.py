@@ -117,7 +117,8 @@ def train_loop(*,
     del m['num_samples']
     return m
 
-  def update_metrics(metrics, *, labels, output, displacement, mask, loss=None, recon_loss):
+  def update_metrics(metrics, *, labels, im_estimate, out, loss=None, recon_loss):
+    mask = out['mask']
     N, K, H, W = mask.shape
     metrics['num_samples'] += N
     if loss is not None:
@@ -132,7 +133,8 @@ def train_loop(*,
     # ) # Mean over the # of objects in the scene
     # metrics['Metric/MaskVar']   += torch.sum(torch.mean(mask * (1 - mask), dim=(1,))) # Mask var
 
-    if 'camera_translation' in labels:
+    if 'camera_translation' in labels and out.get('displacement') != None:
+      displacement = out.get('displacement')
       ct = labels['camera_translation'].to(device)
       H, W = tuple(mask.shape[2:4])
       # Need this in case using forwbackw and so batch size of displacement is 2*M = N
@@ -146,7 +148,7 @@ def train_loop(*,
     im1, im2 = im1.to(device), im2.to(device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
-    total_loss, recon_loss, output, mask, flow, displacement = train_model(
+    total_loss, recon_loss, im2_estimate, out = train_model(
       im1, im2, mask_logit_noise_var=get_mask_logit_noise(e))
     log.DEBUG(f'After forward {step}:', memory_summary(device))
     total_loss.backward()
@@ -157,10 +159,9 @@ def train_loop(*,
       metrics,
       loss=total_loss.item() * batch_size,
       recon_loss=recon_loss.item() * batch_size,
-      output=output,
+      im_estimate=im2_estimate,
       labels=labels,
-      displacement=displacement,
-      mask=mask,
+      out=out
     )
 
   def run_validation(model, dl):
@@ -172,16 +173,15 @@ def train_loop(*,
       for im1, im2, labels in dl:
         N, C, H, W = im1.shape
         im1, im2 = im1.to(device), im2.to(device)
-        total_loss, recon_loss, output, mask, flow, displacement = validation_model(
+        total_loss, recon_loss, im2_estimate, out = validation_model(
           im1, im2, reduction=torch.sum)
 
         update_metrics(
           metrics=m,
           labels=labels,
           recon_loss=recon_loss,
-          output=output,
-          mask=mask,
-          displacement=displacement,
+          out=out,
+          im_estimate=im2_estimate
         )
 
     model.train()
@@ -253,13 +253,13 @@ def train(*,
   # sfm is the only model with parameters. The validation_model and train_model return the self-supervised
   # loss for training purposes.
 
-  sfm = sfmnet.SfMNet3D(H=H, W=W, im_channels=im_channels,
+  sfm = sfmnet.SfMNet2D(H=H, W=W, im_channels=im_channels,
               C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth,
               hidden_layer_widths=[
                 fc_layer_width]*num_hidden_layers
               )
 
-  validation_model = sfmnet.LossModule(sfm, l1_flow_reg_coeff=flowreg_coeff)
+  validation_model = sfmnet.LossModule(sfm_model=sfm, l1_flow_reg_coeff=flowreg_coeff)
 
   if forwbackw_reg_coeff != 0.:
     train_model = sfmnet.ForwBackwLoss(
