@@ -254,6 +254,7 @@ class SfMNet3D(torch.nn.Module):
     depth_embedding, depth_encodings = self.depth_encoder(input[:, 0:3])
     depth = self.depth_decoder(depth_embedding, depth_encodings)
     depth = self.depth_conv(depth).reshape((batch_size, self.H, self.W))
+    depth = torch.clamp(depth, 1, 100)
 
     T = tranform_params[:, 0:6*self.K].reshape((batch_size,self.K,6))
     Tc = tranform_params[:, 6*self.K:]
@@ -653,8 +654,10 @@ def visualize(model, im1, im2):
   with torch.no_grad():
     total_loss, photometric_loss, im2_estimate, out = model(
       im1, im2, reduction=None)
-      
-    output, mask, flow, displacement = im2_estimate.cpu(), out['mask'].cpu(), out['flow'].cpu(), out['displacement'].cpu()
+
+    depth = out.get('depth')
+    depth = depth.cpu() if depth != None else None
+    output, mask, flow = im2_estimate.cpu(), out['mask'].cpu(), out['flow'].cpu(),
     K = mask.shape[1]
 
   im1_cpu = im1.cpu()
@@ -663,7 +666,7 @@ def visualize(model, im1, im2):
   B, C, H, W = im1_cpu.shape
 
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B,
-               ncols=(2+K), squeeze=False,)
+               ncols=(3+K), squeeze=False,)
 
   for b in range(B):
     second = im2_cpu[b].permute(1, 2, 0)
@@ -679,13 +682,19 @@ def visualize(model, im1, im2):
               interpolation='none', vmin=0., vmax=1.)
     ax[2*b][1].set_title(f'F_21\n(photo_loss  ={photometric_loss[b]:.8f})', wrap=True)
 
+    if depth is not None:
+      ax[2*b][2].imshow(rgb2gray(second), cmap='gray')
+      ax[2*b][2].imshow(depth, alpha=0.5)
+      ax[2*b][2].set_title('depth')
+
     for k in range(K):
-      ax[2*b][2+k].imshow(rgb2gray(predsecond),
+      ax[2*b][3+k].imshow(rgb2gray(predsecond),
                 interpolation='none', cmap='gray', vmin=0., vmax=1.)
-      ax[2*b][2+k].imshow(mask[b, k], interpolation='none',
+      ax[2*b][3+k].imshow(mask[b, k], interpolation='none',
                 alpha=0.9, vmin=0., vmax=1., cmap='Reds')
-      ax[2*b][2+k].set_title('Recon 2nd w/ mask %d\nd=(%.2f, %.2f)\nmass=%.2f' % (
-        k, displacement[b, k, 0], displacement[b, k, 1], torch.sum(mask[b, k])))
+      ax[2*b][3+k].set_title('Recon 2nd w/ mask %d\nmass=%.2f' % (
+        k, torch.sum(mask[b, k])))
+      ax[2*b][3+k]
 
   fig.tight_layout()
   return fig
