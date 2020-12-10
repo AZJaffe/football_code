@@ -14,6 +14,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import math
 import pprint
 from torch.utils.tensorboard import SummaryWriter
+import kitti_dataset
 
 
 import sfmnet
@@ -216,7 +217,9 @@ def train_loop(*,
 
 def train(*,
       data_dir,
-      sliding_data=True,
+      dataset_type,
+      rgb=True, # Used for kitti dataset
+
       tensorboard_dir=None,
       checkpoint_file=None,
       checkpoint_freq=10,
@@ -232,6 +235,7 @@ def train(*,
       conv_depth=2,
       flowreg_coeff=0.,
       forwbackw_reg_coeff=0.,
+      dimension=3, # Either 2dsfm or 3dsfm
 
       lr=0.001,
       mask_logit_noise_curriculum=None,
@@ -247,14 +251,27 @@ def train(*,
       ):
   args = locals()
 
-  ds = PairConsecutiveFramesDataset(data_dir)
+  if dataset_type == 'consecutive':
+    ds = PairConsecutiveFramesDataset(data_dir)
+  if dataset_type == 'kitti_stereo':
+    ds = kitti_dataset.CollectionKittiRawStereoDataset(data_dir, rgb)
+  else:
+    raise f'dataset_type {dataset_type} not supported'
+
   im_channels, H, W = ds[0][0].shape
 
   # sfm is the only model with parameters. The validation_model and train_model return the self-supervised
   # loss for training purposes.
 
-  sfm = sfmnet.SfMNet2D(H=H, W=W, im_channels=im_channels,
-              C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth,
+  if dimension == 2:
+    sfm = sfmnet.SfMNet2D(H=H, W=W, im_channels=im_channels,
+                C=C, K=K, camera_translation=camera_translation, conv_depth=conv_depth,
+                hidden_layer_widths=[
+                  fc_layer_width]*num_hidden_layers
+                )
+  if dimension == 3:
+      sfm = sfmnet.SfMNet3D(H=H, W=W, im_channels=im_channels,
+              C=C, K=K, conv_depth=conv_depth,
               hidden_layer_widths=[
                 fc_layer_width]*num_hidden_layers
               )
@@ -281,11 +298,12 @@ def train(*,
 
   global log
   rank = get_rank()
-  log = logger.logger(logger.LEVEL_INFO, rank)
-  log.INFO('Initialized the model which has', n_params, 'parameters')
   if rank is 0:
     pprint.PrettyPrinter(indent=4).pprint(args)
-
+  log = logger.logger(logger.LEVEL_INFO, rank)
+  log.INFO('Initialized the model which has', n_params, 'parameters')
+  log.INFO('Dataset has size', len(ds))
+  
   log.INFO('Training on', device)
   log.DEBUG(f'Inputs has size ({im_channels},{H},{W})')
 
@@ -317,8 +335,11 @@ def train(*,
     writer = None
 
   if n_vis_point is not None:
-    vis_point = ds_validation[0:n_vis_point]
-    vis_point = (vis_point[0].to(device), vis_point[1].to(device))
+    vis_dl = torch.utils.data.DataLoader(ds_validation, batch_size=n_vis_point, shuffle=False)
+    vis_point = next(iter(vis_dl))
+    train_model(*vis_point)
+    validation_model(*vis_point)
+
   else:
     vis_point = None
 
@@ -343,7 +364,8 @@ def train(*,
 
     if vis_point is not None and epoch % vis_freq == 0:
       validation_model.eval()
-      fig = sfmnet.visualize(validation_model, *vis_point)
+      vp = (vis_point[0].to(device), vis_point[1].to(device))
+      fig = sfmnet.visualize(validation_model, *vp)
       validation_model.train()
       if writer is not None:
         writer.add_figure(f'Visualization', fig, step)

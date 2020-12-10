@@ -193,6 +193,9 @@ class SfMNet3D(torch.nn.Module):
     self.H, self.W, self.K, self.C = H, W, K, C
     self.im_channels = im_channels
 
+    assert self.H % 2 ** conv_depth == 0, f'Height of image, {H} must be divisible by {2**conv_depth}, 2^conv_depth'
+    assert self.W % 2 ** conv_depth == 0, f'Width of image, {W} must be divisible by {2**conv_depth}, 2^conv_depth'
+
     self.motion_encoder = ConvEncoder(
       H=H, W=W, im_channels=im_channels*2, C=C, conv_depth=conv_depth)
     self.motion_decoder = ConvDecoder(
@@ -201,7 +204,7 @@ class SfMNet3D(torch.nn.Module):
       H=H, W=W, im_channels=im_channels, C=C, conv_depth=conv_depth)
     self.depth_decoder = ConvDecoder(C=C, K=1, conv_depth=conv_depth)
     self.mask_conv = nn.Conv2d(
-      self.C, K, kernel_size=1, stride=1, padding=0, bias=False)
+      self.C, K, kernel_size=1, stride=1, padding=0, bias=False) if K != 0 else None
     self.depth_conv = nn.Conv2d(
       self.C, 1, kernel_size=1, stride=1, padding=0, bias=False)
 
@@ -235,11 +238,14 @@ class SfMNet3D(torch.nn.Module):
     batch_size = input.shape[0]
 
     motion_embedding, motion_encodings = self.motion_encoder(input)
-    masks = self.motion_decoder(motion_embedding, motion_encodings)
-    noise = torch.tensor(np.random.normal(
-      scale=mask_logit_noise_var), dtype=torch.float32).to(masks.device)
-    masks = torch.sigmoid(self.mask_conv(masks + noise))
     xs = torch.flatten(motion_embedding, start_dim=1)
+    if self.motion_decoder != None:
+      masks = self.motion_decoder(motion_embedding, motion_encodings)
+      noise = torch.tensor(np.random.normal(
+        scale=mask_logit_noise_var), dtype=torch.float32).to(masks.device)
+      masks = torch.sigmoid(self.mask_conv(masks + noise))
+    else:
+      masks = torch.ones((batch_size, 0, self.H, self.W))
 
     # Compute the displacements starting from the embedding using FC layers
     for i, fc in enumerate(self.fc_layers):
@@ -248,8 +254,6 @@ class SfMNet3D(torch.nn.Module):
       else:
         xs = fc(xs)
     tranform_params = xs.reshape((batch_size, 6*self.K + 9))
-
-    print(tranform_params.shape)
 
     depth_embedding, depth_encodings = self.depth_encoder(input[:, 0:3])
     depth = self.depth_decoder(depth_embedding, depth_encodings)
@@ -553,8 +557,11 @@ def edge_aware_smoothness_reg(*, im, depth, flow, mask, depth_coeff=0., flow_coe
     lap_depth = kornia.laplacian(depth.unsqueeze(1), kernel_size=3)
     depth_smooth_reg = torch.mean(exp_norm * lap_depth)
 
-    d_mask = kornia.sobel(mask)
-    mask_smooth_reg = torch.mean(exp_norm * torch.norm(d_mask, p=1, dim=1))
+    if K != 0:
+      d_mask = kornia.sobel(mask)
+      mask_smooth_reg = torch.mean(exp_norm * torch.norm(d_mask, p=1, dim=1))
+    else:
+      mask_smooth_reg = 0.
     return flow_coeff * flow_smooth_reg + depth_coeff * depth_smooth_reg + mask_coeff * mask_smooth_reg
 
 def l1_photometric_loss(p, q, reduction=torch.mean):
@@ -642,8 +649,6 @@ def l2_displacement_regularization(displacement):
 
 
 def visualize(model, im1, im2):
-  # TODO Figure out what to do with camera translation
-  # TODO only show one row, not both forw and backw
   """ im1 and im2 should be size BxCxHxW """
   def rgb2gray(rgb):
     if len(rgb.shape) == 2 or rgb.shape[2] == 1:
@@ -665,8 +670,9 @@ def visualize(model, im1, im2):
 
   B, C, H, W = im1_cpu.shape
 
+  ncols = 2 + K if depth is None else 3 + K
   fig, ax = plt.subplots(figsize=(9, B*4), nrows=2*B,
-               ncols=(3+K), squeeze=False,)
+               ncols=ncols, squeeze=False,)
 
   for b in range(B):
     second = im2_cpu[b].permute(1, 2, 0)
@@ -684,7 +690,7 @@ def visualize(model, im1, im2):
 
     if depth is not None:
       ax[2*b][2].imshow(rgb2gray(second), cmap='gray')
-      ax[2*b][2].imshow(depth, alpha=0.5)
+      ax[2*b][2].imshow(depth.squeeze(0), alpha=0.5)
       ax[2*b][2].set_title('depth')
 
     for k in range(K):
