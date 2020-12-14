@@ -369,9 +369,6 @@ def train(*,
       validation_model.train()
       if writer is not None:
         writer.add_figure(f'Visualization', fig, step)
-      else:
-        pass
-        # plt.show()
 
   train_loop(
     device=device,
