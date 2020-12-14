@@ -147,6 +147,7 @@ def train_loop(*,
   def run_step(im1, im2, labels, metrics):
     optimizer.zero_grad()
     im1, im2 = im1.to(device), im2.to(device)
+    print(device, im1.device, im2.device)
     log.DEBUG(f'Start of train batch {step}:', memory_summary(device))
     batch_size, C, H, W = im1.shape
     total_loss, recon_loss, im2_estimate, out = train_model(
