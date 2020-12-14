@@ -410,6 +410,7 @@ class Flow3D(torch.nn.Module):
     pixel_coords = self.pixel_locations[0:B]  # BxHxWx2
     world_coords = self.pixel_to_world(
       pixel_coords, depth).reshape((B, 1, H, W, 3))  # BxHxWx3
+    print(world_coords.device, mask.device)
     p = self.centre_of_mass(mask, world_coords)  # BxKx3
 
     transformed_world_coords = world_coords - p.reshape((B, K, 1, 1, 3))
