@@ -245,7 +245,7 @@ class SfMNet3D(torch.nn.Module):
         scale=mask_logit_noise_var), dtype=torch.float32).to(masks.device)
       masks = torch.sigmoid(self.mask_conv(masks + noise))
     else:
-      masks = torch.ones((batch_size, 0, self.H, self.W))
+      masks = torch.ones((batch_size, 0, self.H, self.W), device=input.device)
 
     # Compute the displacements starting from the embedding using FC layers
     for i, fc in enumerate(self.fc_layers):
@@ -410,7 +410,6 @@ class Flow3D(torch.nn.Module):
     pixel_coords = self.pixel_locations[0:B]  # BxHxWx2
     world_coords = self.pixel_to_world(
       pixel_coords, depth).reshape((B, 1, H, W, 3))  # BxHxWx3
-    print(world_coords.device, mask.device)
     p = self.centre_of_mass(mask, world_coords)  # BxKx3
 
     transformed_world_coords = world_coords - p.reshape((B, K, 1, 1, 3))
