@@ -237,8 +237,6 @@ class SfMNet3D(torch.nn.Module):
   def forward(self, input, mask_logit_noise_var=0.):
     batch_size = input.shape[0]
 
-    print(input.device)
-
     motion_embedding, motion_encodings = self.motion_encoder(input)
     xs = torch.flatten(motion_embedding, start_dim=1)
     if self.motion_decoder != None:
@@ -473,7 +471,6 @@ class LossModule(torch.nn.Module):
       while None will return the loss for each element of the batch.
     """
     B = im1.shape[0]
-    print(im1.device, im2.device)
     inp = torch.cat((im1, im2), dim=1)
     out = self.sfm_model(inp, mask_logit_noise_var)
     mask, flow, displacement, depth = out.get('mask'), out.get('flow'), out.get('displacement'), out.get('depth')
