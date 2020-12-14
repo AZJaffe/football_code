@@ -338,8 +338,6 @@ def train(*,
   if n_vis_point is not None:
     vis_dl = torch.utils.data.DataLoader(ds_validation, batch_size=n_vis_point, shuffle=False)
     vis_point = next(iter(vis_dl))
-    train_model(*vis_point)
-    validation_model(*vis_point)
 
   else:
     vis_point = None
