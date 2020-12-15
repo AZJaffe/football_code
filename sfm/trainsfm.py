@@ -233,6 +233,10 @@ def train(*,
       fc_layer_width=128,
       num_hidden_layers=1,
       conv_depth=2,
+
+      depth_smooth_reg=0.,
+      flow_smooth_reg=0.,
+      mask_smooth_reg=0., 
       flowreg_coeff=0.,
       forwbackw_reg_coeff=0.,
       dimension=3, # Either 2dsfm or 3dsfm
@@ -276,7 +280,12 @@ def train(*,
                 fc_layer_width]*num_hidden_layers
               )
 
-  validation_model = sfmnet.LossModule(sfm_model=sfm, l1_flow_reg_coeff=flowreg_coeff)
+  validation_model = sfmnet.LossModule(sfm_model=sfm, 
+    l1_flow_reg_coeff=flowreg_coeff,
+    depth_smooth_reg=depth_smooth_reg,
+    flow_smooth_reg=flow_smooth_reg,
+    mask_smooth_reg=mask_smooth_reg, 
+  )
 
   if forwbackw_reg_coeff != 0.:
     train_model = sfmnet.ForwBackwLoss(
