@@ -111,13 +111,26 @@ class SfMNet2D(torch.nn.Module):
   def get_params(self):
     """ Get a dictionary describing the configuration of the model """
     return {
+      'type': 'sfmnet2d',
+      'version': '1.0.0',
       'H': self.H,
       'W': self.W,
+      'im_channels': self.im_channels,
       'K': self.K,
       'C': self.C,
       'conv_depth': self.conv_depth,
-      'fc_layer_width': self.fc_layer_width,
+      'hidden_layer_widths': self.hidden_layer_widths,
+      'camera_translation': self.camera_translation,
     }
+
+  @staticmethod
+  def load_from_params(params, state_dict):
+    if params['type'] != 'sfmnet2d' or params['version'].split('.')[0] != '1':
+      return None
+    model = SfMNet2D(**params)
+    model.load_state_dict(state_dict)
+    return model
+
 
   def total_params(self):
     return sum(p.numel() for p in self.parameters())
@@ -222,14 +235,26 @@ class SfMNet3D(torch.nn.Module):
 
   def get_params(self):
     """ Get a dictionary describing the configuration of the model """
+
     return {
+      'type': 'sfmnet3d',
+      'version': '1.0.0',
       'H': self.H,
       'W': self.W,
+      'im_channels': self.im_channels,
       'K': self.K,
       'C': self.C,
       'conv_depth': self.conv_depth,
-      'fc_layer_width': self.fc_layer_width,
+      'hidden_layer_widths': self.hidden_layer_widths,
     }
+
+  @staticmethod
+  def load_from_params(params, state_dict):
+    if params['type'] != 'sfmnet2d' or params['version'].split('.')[0] != '1':
+      return None
+    model = SfMNet3D(**params)
+    model.load_state_dict(state_dict)
+    return model
 
   def total_params(self):
     return sum(p.numel() for p in self.parameters())

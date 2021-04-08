@@ -35,7 +35,11 @@ def load(checkpoint_file, model, optimizer):
     map_location = {
       'cuda:0': f'cuda:{get_rank()}' if torch.cuda.is_available() else 'cpu'}
     checkpoint = torch.load(checkpoint_file, map_location)
-    model.load_state_dict(checkpoint['model_state_dict'])
+    model = sfmnet.SfMNet3D.load_from_params(checkpoint['model_hyperparams'], checkpoint['model_state_dict'])
+    if model == None:
+      model = sfmnet.SfMNet2D.load_from_params(checkpoint['model_hyperparams'], checkpoint['model_state_dict'])
+    if model == None:
+      raise Exception('Cannot load checkpoint', checkpoint_file)
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     log.INFO(
       f'RANK {get_rank()}: Loaded from checkpoint at {checkpoint_file}')
@@ -56,6 +60,7 @@ def save(checkpoint_file, model, optimizer, epoch):
   torch.save({
     'model_state_dict': model.state_dict(),
     'optimizer_state_dict': optimizer.state_dict(),
+    'model_hyperparams': model.get_params(),
     'epoch': epoch
   }, tmp_file)
   os.replace(tmp_file, checkpoint_file)
